@@ -1,0 +1,36 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# SQLite databases & WAL logs (Contains local authorized sessions & tokens)
+*.db
+*.db-wal
+*.db-shm
+**/data/*.db
+**/data/*.db-wal
+**/data/*.db-shm
+
+# Environments & IDE
+.env
+.venv
+env/
+venv/
+ENV/
+.idea/
+.vscode/
+*.sublime-workspace
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Third-party cloned reference repositories
+hme-manager/
+iCloud-Privacy-Mail/
+
+# OS generated files
+.DS_Store
+Thumbs.db

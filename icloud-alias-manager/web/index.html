@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>iCloud 别名邮箱多账号智能管理平台</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>☁️</text></svg>">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">☁️</div>
+        <div class="brand-text">
+          <h2>iCloud Alias</h2>
+          <span class="sub-text">多账号自动化中台</span>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <button class="nav-item active" data-tab="dashboard">
+          <span class="icon">📊</span> 仪表盘
+        </button>
+        <button class="nav-item" data-tab="accounts">
+          <span class="icon">👥</span> 账号管理
+        </button>
+        <button class="nav-item" data-tab="batch">
+          <span class="icon">🚀</span> 批量创建
+        </button>
+        <button class="nav-item" data-tab="aliases">
+          <span class="icon">✉️</span> 别名列表
+        </button>
+        <button class="nav-item" data-tab="logs">
+          <span class="icon">📜</span> 系统日志
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="system-status">
+          <span class="pulse-dot"></span>
+          <span id="system-status-text">系统正常运行</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Header -->
+      <header class="top-header">
+        <div class="header-title">
+          <h1 id="page-title">系统仪表盘</h1>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-secondary" onclick="app.refreshCurrentTab()">
+            🔄 刷新数据
+          </button>
+          <button class="btn btn-primary" onclick="app.openImportModal()">
+            ➕ 导入新账号
+          </button>
+        </div>
+      </header>
+
+      <!-- Content Views -->
+      <div class="view-container">
+
+        <!-- 1. DASHBOARD VIEW -->
+        <section id="view-dashboard" class="tab-view active">
+          <!-- Stats Grid -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon bg-blue">👤</div>
+              <div class="stat-info">
+                <span class="stat-label">总管理账号</span>
+                <span class="stat-val" id="stat-total-accounts">0</span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon bg-green">🟢</div>
+              <div class="stat-info">
+                <span class="stat-label">正常可用账号</span>
+                <span class="stat-val" id="stat-active-accounts">0</span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon bg-amber">⏳</div>
+              <div class="stat-info">
+                <span class="stat-label">限流冷却中</span>
+                <span class="stat-val" id="stat-cooling-accounts">0</span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon bg-purple">📬</div>
+              <div class="stat-info">
+                <span class="stat-label">本地已建别名</span>
+                <span class="stat-val" id="stat-total-aliases">0</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Active Task Card -->
+          <div class="card active-task-card" id="dashboard-active-task" style="display:none;">
+            <div class="card-header">
+              <div class="task-title-group">
+                <h3>当前批量任务进行中</h3>
+                <span class="badge badge-primary" id="dash-task-status">RUNNING</span>
+              </div>
+              <div class="task-actions">
+                <button class="btn btn-sm btn-warning" id="dash-btn-pause" onclick="app.pauseTask()">暂停</button>
+                <button class="btn btn-sm btn-danger" onclick="app.cancelTask()">取消</button>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="progress-wrap">
+                <div class="progress-info">
+                  <span id="dash-task-progress-text">进度: 0 / 0</span>
+                  <span id="dash-task-account-text">执行账号: -</span>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill" id="dash-task-bar-fill" style="width: 0%;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Navigation / Welcome Card -->
+          <div class="card">
+            <div class="card-header">
+              <h3>快速功能入口</h3>
+            </div>
+            <div class="card-body quick-links-grid">
+              <div class="quick-link-box" onclick="app.openProtocolImportModal()">
+                <div class="quick-icon">⚡</div>
+                <h4>批量协议格式导入</h4>
+                <p>粘贴 账号----密码----取码URL，纯后台自动协议登录与 2FA 取码</p>
+              </div>
+              <div class="quick-link-box" onclick="app.switchTab('batch')">
+                <div class="quick-icon">🚀</div>
+                <h4>发起批量自动创建</h4>
+                <p>支持多账号轮询均衡或顺序打满，遇到限流自动冷却转移</p>
+              </div>
+              <div class="quick-link-box" onclick="app.switchTab('accounts')">
+                <div class="quick-icon">👥</div>
+                <h4>账号状态与管理</h4>
+                <p>多账号状态监测，实时连通性检测，远端别名同步</p>
+              </div>
+              <div class="quick-link-box" onclick="app.switchTab('aliases')">
+                <div class="quick-icon">✉️</div>
+                <h4>别名邮箱资产库</h4>
+                <p>一键复制邮箱、导出为 TXT/CSV/JSON 供下游自动化取用</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. ACCOUNTS VIEW -->
+        <section id="view-accounts" class="tab-view">
+          <div class="section-toolbar">
+            <div class="toolbar-left">
+              <input type="text" class="input search-input" id="account-search" placeholder="筛选账号名称 / DSID..." oninput="app.filterAccounts()">
+            </div>
+            <div class="toolbar-right">
+              <button class="btn btn-primary" onclick="app.openProtocolImportModal()">⚡ 批量账号导入 (账号----密码----取码URL)</button>
+              <button class="btn btn-secondary" onclick="app.openImportModal()">📥 导入 cURL</button>
+              <button class="btn btn-secondary" onclick="app.openManualAccountModal()">✏️ 手动输入</button>
+            </div>
+          </div>
+
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>账号名称</th>
+                  <th>通道 / Host</th>
+                  <th>状态</th>
+                  <th>远端别名数</th>
+                  <th>本地创建</th>
+                  <th>默认转发收件箱</th>
+                  <th>限流冷却状态</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="accounts-table-body">
+                <tr><td colspan="8" class="text-center text-muted">加载中...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 3. BATCH CREATE VIEW -->
+        <section id="view-batch" class="tab-view">
+          <div class="grid-split">
+            <!-- Left: Batch Form -->
+            <div class="card">
+              <div class="card-header">
+                <h3>新建批量创建任务</h3>
+              </div>
+              <div class="card-body">
+                <form id="batch-form" onsubmit="app.submitBatchJob(event)">
+                  <div class="form-group">
+                    <label>创建数量 (个)</label>
+                    <input type="number" class="input" id="batch-count" min="1" max="500" value="10" required>
+                    <span class="form-hint">建议单批 10-50 个，系统会在账号间自动调配与限流保护</span>
+                  </div>
+
+                  <div class="form-group">
+                    <label>多账号调度策略</label>
+                    <select class="input" id="batch-strategy" onchange="app.onStrategyChange()">
+                      <option value="round_robin">轮询均衡 (推荐：各可用账号循环创建，分散额度压力)</option>
+                      <option value="fill_first">顺序打满 (优先使用首个账号直到限流，自动切换下一账号)</option>
+                      <option value="specific">指定单个账号 (仅在选定账号上执行)</option>
+                    </select>
+                  </div>
+
+                  <div class="form-group" id="group-target-account" style="display:none;">
+                    <label>选择指定账号</label>
+                    <select class="input" id="batch-target-account">
+                      <!-- Populated dynamically -->
+                    </select>
+                  </div>
+
+                  <div class="form-group">
+                    <label>别名标签前缀</label>
+                    <input type="text" class="input" id="batch-label" placeholder="例如：User、Reg、VIP" value="Auto">
+                    <span class="form-hint">系统将自动追加序号，如 Auto01、Auto02...</span>
+                  </div>
+
+                  <div class="form-group">
+                    <label>备注信息 (可选)</label>
+                    <input type="text" class="input" id="batch-note" placeholder="可填写用途说明">
+                  </div>
+
+                  <div class="form-actions">
+                    <button type="submit" class="btn btn-primary btn-block">🚀 立即启动批量创建</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            <!-- Right: Live Progress & Queue -->
+            <div class="card">
+              <div class="card-header">
+                <h3>实时任务监视器</h3>
+                <div class="task-ctrls" id="task-ctrl-buttons" style="display:none;">
+                  <button class="btn btn-sm btn-warning" id="btn-batch-pause" onclick="app.pauseTask()">暂停</button>
+                  <button class="btn btn-sm btn-danger" onclick="app.cancelTask()">取消任务</button>
+                </div>
+              </div>
+              <div class="card-body">
+                <div id="no-task-placeholder" class="empty-placeholder">
+                  <span>💤 当前没有正在执行的任务</span>
+                </div>
+
+                <div id="active-task-details" style="display:none;">
+                  <div class="progress-wrap">
+                    <div class="progress-info">
+                      <strong id="batch-prog-counter">0 / 0</strong>
+                      <span id="batch-prog-account" class="text-muted">当前账号: -</span>
+                    </div>
+                    <div class="progress-bar">
+                      <div class="progress-fill" id="batch-prog-bar" style="width: 0%;"></div>
+                    </div>
+                  </div>
+
+                  <div class="item-list-container">
+                    <h4>任务项执行明细</h4>
+                    <div class="item-scroll-list" id="batch-items-container">
+                      <!-- Rendered by JS -->
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4. ALIASES VIEW -->
+        <section id="view-aliases" class="tab-view">
+          <div class="section-toolbar">
+            <div class="toolbar-left">
+              <input type="text" class="input search-input" id="alias-search" placeholder="搜索别名邮箱 / 标签 / 备注..." oninput="app.searchAliases()">
+              <select class="input" id="alias-account-filter" onchange="app.filterAliasesByAccount()">
+                <option value="">全部账号</option>
+              </select>
+            </div>
+            <div class="toolbar-right">
+              <button class="btn btn-secondary" onclick="app.createSingleAliasModal()">⚡ 单次快捷创建</button>
+              <div class="dropdown">
+                <button class="btn btn-primary">📥 导出别名 ▾</button>
+                <div class="dropdown-content">
+                  <a href="javascript:void(0)" onclick="app.exportAliases('txt')">纯邮箱列表 (.txt)</a>
+                  <a href="javascript:void(0)" onclick="app.exportAliases('csv')">完整数据表 (.csv)</a>
+                  <a href="javascript:void(0)" onclick="app.exportAliases('json')">JSON 数据 (.json)</a>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>别名邮箱地址</th>
+                  <th>所属账号</th>
+                  <th>标签</th>
+                  <th>备注</th>
+                  <th>转发目标</th>
+                  <th>创建时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="aliases-table-body">
+                <tr><td colspan="7" class="text-center text-muted">加载中...</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Pagination -->
+          <div class="pagination-bar">
+            <span id="alias-pagination-text">共 0 条记录</span>
+            <div class="pagination-buttons">
+              <button class="btn btn-sm btn-secondary" id="alias-prev-page" onclick="app.prevAliasPage()">上一页</button>
+              <span id="alias-page-num" class="page-indicator">第 1 页</span>
+              <button class="btn btn-sm btn-secondary" id="alias-next-page" onclick="app.nextAliasPage()">下一页</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. LOGS VIEW -->
+        <section id="view-logs" class="tab-view">
+          <div class="section-toolbar">
+            <div class="toolbar-left">
+              <h3>系统实时事件流水</h3>
+            </div>
+            <div class="toolbar-right">
+              <label class="checkbox-label">
+                <input type="checkbox" id="log-auto-refresh" checked> 自动刷新 (3s)
+              </label>
+              <button class="btn btn-sm btn-secondary" onclick="app.loadLogs()">刷新日志</button>
+            </div>
+          </div>
+
+          <div class="log-terminal" id="log-terminal">
+            <div class="log-line text-muted">等待日志加载...</div>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- PROTOCOL IMPORT MODAL -->
+  <div class="modal" id="modal-protocol-import">
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <h3>⚡ 批量免浏览器协议导入</h3>
+        <button class="close-btn" onclick="app.closeModal('modal-protocol-import')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="callout callout-info">
+          <strong>💡 纯协议全自动登录说明：</strong>
+          <p style="margin: 4px 0;">无需打开浏览器，直接粘贴您的账号凭证行。系统全自动完成 <strong>Apple SRP-6a 安全握手</strong>、自动调用 <strong>取码链接</strong> 轮询捕获 6 位验证码、提交 2FA 完成双重认证，并建立长效信任会话！</p>
+          <p style="margin: 4px 0;"><strong>支持格式：</strong><code>账号----密码----取码URL</code>（支持多行批量导入，分隔符支持 <code>----</code>、逗号、竖线 <code>|</code> 或空格）</p>
+        </div>
+
+        <div class="form-group" id="proto-input-group">
+          <label>批量账号凭证（每行一个账号）：</label>
+          <textarea class="textarea" id="proto-import-text" rows="8" placeholder="your_account@gmail.com----YourPassword123----https://devices.example.com/api/getcode?id=123456&#10;account2@gmail.com----Password456----https://devices.example.com/api/getcode?id=654321"></textarea>
+        </div>
+
+        <div id="proto-import-progress-box" class="preview-box" style="display:none; margin-top: 15px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h4 style="margin: 0;">🚀 批量协议登录进度 (<span id="proto-prog-count">0/0</span>)</h4>
+            <span class="badge badge-info" id="proto-job-badge">执行中</span>
+          </div>
+          <div class="progress-bar" style="height: 8px; margin-bottom: 12px; border-radius: 4px;">
+            <div class="progress-fill" id="proto-bar-fill" style="width: 0%; border-radius: 4px;"></div>
+          </div>
+          <div id="proto-items-table" style="max-height: 260px; overflow-y: auto; font-size: 0.9rem;">
+            <!-- Render live items -->
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="app.closeModal('modal-protocol-import')">关闭</button>
+        <button class="btn btn-primary" id="btn-start-proto-import" onclick="app.startProtocolImport()">🚀 开始全自动协议登录与导入</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- IMPORT CURL MODAL -->
+  <div class="modal" id="modal-import">
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <h3>导入 iCloud 会话凭据</h3>
+        <button class="close-btn" onclick="app.closeModal('modal-import')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="callout callout-info">
+          <strong>💡 如何获取 cURL 命令：</strong>
+          <ol>
+            <li>在电脑浏览器登录 <a href="https://www.icloud.com" target="_blank">icloud.com</a>，进入 <strong>iCloud+ 隐私邮箱 (Hide My Email)</strong> 页面。</li>
+            <li>按 <code>F12</code> 打开开发者工具，切换至 <strong>Network (网络)</strong> 选项卡。</li>
+            <li>筛选 <code>list</code> 或 <code>hme</code>，找到 <code>/v2/hme/list?clientBuildNumber=...</code> 请求。</li>
+            <li>右键该请求 &rarr; <strong>Copy &rarr; Copy as cURL (bash)</strong>，粘贴在下方即可！</li>
+          </ol>
+        </div>
+
+        <div class="form-group">
+          <label>账号自定义标识名称 (例如：账号A-主号)</label>
+          <input type="text" class="input" id="import-account-name" placeholder="起个容易分辨的名字">
+        </div>
+
+        <div class="form-group">
+          <label>粘贴 cURL 命令 或 HAR JSON：</label>
+          <textarea class="textarea" id="import-curl-text" rows="8" placeholder="curl 'https://p68-maildomainws.icloud.com/v2/hme/list?...' -H 'Cookie: ...'"></textarea>
+        </div>
+
+        <div id="import-preview-box" class="preview-box" style="display:none;">
+          <h4>✅ 解析成功预览</h4>
+          <pre id="import-preview-json"></pre>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="app.previewImportCurl()">🔍 测试解析</button>
+        <button class="btn btn-primary" onclick="app.saveImportedAccount()">💾 保存账号并测试连通性</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MANUAL ACCOUNT MODAL -->
+  <div class="modal" id="modal-manual-account">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>手动填写 iCloud 账号参数</h3>
+        <button class="close-btn" onclick="app.closeModal('modal-manual-account')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>账号名称</label>
+          <input type="text" class="input" id="man-name" placeholder="账号1">
+        </div>
+        <div class="form-group">
+          <label>Host 接口域名 (例如: p68-maildomainws.icloud.com)</label>
+          <input type="text" class="input" id="man-host" placeholder="pXX-maildomainws.icloud.com">
+        </div>
+        <div class="form-group">
+          <label>Apple DSID</label>
+          <input type="text" class="input" id="man-dsid" placeholder="一串纯数字">
+        </div>
+        <div class="form-group">
+          <label>Cookie 原文</label>
+          <textarea class="textarea" id="man-cookie" rows="4" placeholder="完整的 Cookie 字符串"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="app.closeModal('modal-manual-account')">取消</button>
+        <button class="btn btn-primary" onclick="app.saveManualAccount()">保存账号</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SINGLE CREATE MODAL -->
+  <div class="modal" id="modal-single-create">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>单次快捷创建别名</h3>
+        <button class="close-btn" onclick="app.closeModal('modal-single-create')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>选择创建账号 (留空则自动选择可用账号)</label>
+          <select class="input" id="single-create-account">
+            <option value="">自动挑选可用账号 (轮询)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>别名标签 (Label)</label>
+          <input type="text" class="input" id="single-create-label" placeholder="例如：测试注册">
+        </div>
+        <div class="form-group">
+          <label>备注 (Note)</label>
+          <input type="text" class="input" id="single-create-note" placeholder="可选备注">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="app.closeModal('modal-single-create')">取消</button>
+        <button class="btn btn-primary" onclick="app.executeSingleCreate()">立即创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
