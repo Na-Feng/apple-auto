@@ -86,6 +86,7 @@ class ICloudWebClient:
         response_text = ""
 
         # Strategy 1: curl_cffi with Chrome impersonation
+        proxy = self.account.proxy_url.strip() if self.account.proxy_url else None
         if HAS_CURL_CFFI:
             try:
                 resp = cffi_requests.request(
@@ -95,6 +96,7 @@ class ICloudWebClient:
                     data=data_bytes,
                     timeout=timeout,
                     impersonate="chrome124",
+                    proxy=proxy,
                 )
                 status_code = resp.status_code
                 response_text = resp.text
@@ -107,7 +109,12 @@ class ICloudWebClient:
         if status_code == 0:
             req = urllib.request.Request(url, data=data_bytes, headers=headers, method=method)
             try:
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                if proxy:
+                    opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+                    resp_ctx = opener.open(req, timeout=timeout)
+                else:
+                    resp_ctx = urllib.request.urlopen(req, timeout=timeout)
+                with resp_ctx as resp:
                     status_code = resp.status
                     response_text = resp.read().decode("utf-8", errors="replace")
             except urllib.error.HTTPError as e:

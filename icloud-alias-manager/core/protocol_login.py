@@ -46,6 +46,36 @@ def deriveApplePassword(password: str, salt: bytes, iterations: int, protocol: s
     return hashlib.pbkdf2_hmac("sha256", key_input, salt, iterations, 32)
 
 
+def compute_hashcash(bits: int, challenge: str, max_attempts: int = 16777216) -> str:
+    """Computes SHA-1 hashcash string required by Apple Account signin/complete."""
+    now_utc = time.strftime("%Y%m%d%H%M%S", time.gmtime())
+    prefix = f"1:{bits}:{now_utc}:{challenge}::"
+    chars = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+    def to_b36(num: int) -> str:
+        if num == 0:
+            return "0"
+        res = []
+        while num > 0:
+            num, r = divmod(num, 36)
+            res.append(chars[r])
+        return "".join(reversed(res))
+
+    for counter in range(max_attempts):
+        s = f"{prefix}{to_b36(counter)}"
+        digest = hashlib.sha1(s.encode("utf-8")).digest()
+        leading_zeros = 0
+        for b in digest:
+            if b == 0:
+                leading_zeros += 8
+            else:
+                leading_zeros += (8 - b.bit_length())
+                break
+        if leading_zeros >= bits:
+            return s
+    raise RuntimeError(f"Hashcash 计算超出限制 ({max_attempts})")
+
+
 def parse_credential_line(line: str) -> Optional[Tuple[str, str, str]]:
     """
     Parse a credential line formatted as:
@@ -85,15 +115,28 @@ class AppleProtocolLogin:
     def __init__(
         self,
         apple_id: str,
-        client_id: str = "d39ba9916b7251055b22c7f910e2ea796ee65e98b2ddecea8f5dde8d9d1a815d",
+        client_id: str = "",
+        channel: str = "dual",
     ):
         self.apple_id = apple_id.strip().lower()
-        self.client_id = client_id
+        self.channel = channel if channel in ("dual", "apple_account", "icloud_web") else "dual"
+
+        if self.channel == "apple_account":
+            self.client_id = client_id or "af1139274f266b22b68c2a3e7ad932cb3c0bbe854e13a79af78dcc73136882c3"
+            self.home_url = "https://account.apple.com"
+            self.user_agent = (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            )
+        else:
+            self.client_id = client_id or "d39ba9916b7251055b22c7f910e2ea796ee65e98b2ddecea8f5dde8d9d1a815d"
+            self.home_url = "https://www.icloud.com"
+            self.user_agent = (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15"
+            )
+
         self.frame_id = f"auth-{secrets.token_hex(16)}"
-        self.user_agent = (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15"
-        )
         self.cookies: Dict[str, str] = {}
         self.scnt = ""
         self.session_id = ""
@@ -103,7 +146,8 @@ class AppleProtocolLogin:
         self.auth_attributes = ""
         self.auth_host = "idmsa.apple.com"
         self.setup_host = "setup.icloud.com"
-        self.home_url = "https://www.icloud.com"
+        self.hc_bits = 0
+        self.hc_challenge = ""
 
         self.ctx = ssl.create_default_context()
         self.ctx.check_hostname = False
@@ -135,6 +179,13 @@ class AppleProtocolLogin:
                 self.account_country = val.strip()
             elif h_lower == "x-apple-auth-attributes":
                 self.auth_attributes = val.strip()
+            elif h_lower == "x-apple-hc-bits":
+                try:
+                    self.hc_bits = int(val.strip())
+                except Exception:
+                    pass
+            elif h_lower == "x-apple-hc-challenge":
+                self.hc_challenge = val.strip()
 
     def get_cookie_header(self) -> str:
         return "; ".join(f"{k}={v}" for k, v in self.cookies.items())
@@ -169,6 +220,11 @@ class AppleProtocolLogin:
             headers["X-Apple-Session-Token"] = self.session_token
         if self.auth_attributes:
             headers["X-Apple-Auth-Attributes"] = self.auth_attributes
+        if self.channel == "apple_account" and self.hc_bits and self.hc_challenge:
+            try:
+                headers["X-Apple-HC"] = compute_hashcash(self.hc_bits, self.hc_challenge)
+            except Exception as e:
+                logger.warning(f"Hashcash 计算跳过: {e}")
         if self.cookies:
             headers["Cookie"] = self.get_cookie_header()
         return headers
@@ -192,17 +248,57 @@ class AppleProtocolLogin:
                     pass
             logger.info(f"[{self.apple_id}] {step}: {detail}")
 
-        report("Step 1/10", "发起 Apple 授权握手 (authStart)...")
-        u1 = (
-            f"https://{self.auth_host}/appleauth/auth/authorize/signin?"
-            f"frame_id={self.frame_id}&skVersion=7&iframeId={self.frame_id}&"
-            f"client_id={self.client_id}&redirect_uri={self.home_url}&"
-            f"response_type=code&response_mode=web_message&state={self.frame_id}&"
-            f"language=zh_CN&authVersion=latest"
-        )
-        req1 = urllib.request.Request(u1, headers={"User-Agent": self.user_agent, "Accept": "*/*"})
-        with urllib.request.urlopen(req1, timeout=15, context=self.ctx) as resp:
-            self.update_from_headers(resp.getheaders())
+        if self.channel == "apple_account":
+            report("Step 1/10", "预热 Apple Account 门户会话...")
+            try:
+                u0 = "https://account.apple.com/account/manage/section/privacy"
+                req0 = urllib.request.Request(u0, headers={"User-Agent": self.user_agent})
+                with urllib.request.urlopen(req0, timeout=10, context=self.ctx) as resp:
+                    self.update_from_headers(resp.getheaders())
+            except Exception:
+                pass
+
+            report("Step 1/10", "发起 Apple Account 授权握手 (authVersion 8.0.2)...")
+            u1 = (
+                f"https://{self.auth_host}/appleauth/auth/authorize/signin?"
+                f"client_id={self.client_id}&redirect_uri={self.home_url}&"
+                f"response_type=code&response_mode=web_message&state={self.frame_id}&"
+                f"authVersion=8.0.2"
+            )
+            req1 = urllib.request.Request(u1, headers={
+                "User-Agent": self.user_agent,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Sec-Fetch-Dest": "iframe",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "cross-site",
+                "Cookie": self.get_cookie_header(),
+            })
+            with urllib.request.urlopen(req1, timeout=15, context=self.ctx) as resp:
+                self.update_from_headers(resp.getheaders())
+
+            try:
+                u_chal = f"https://{self.auth_host}/appleauth/auth/verify/device/key/challenge"
+                req_chal = urllib.request.Request(
+                    u_chal,
+                    data=json.dumps({"passkeyAutofill": False}).encode("utf-8"),
+                    headers=self.get_srp_headers(),
+                )
+                with urllib.request.urlopen(req_chal, timeout=10, context=self.ctx) as resp:
+                    self.update_from_headers(resp.getheaders())
+            except Exception:
+                pass
+        else:
+            report("Step 1/10", "发起 Apple 授权握手 (authStart)...")
+            u1 = (
+                f"https://{self.auth_host}/appleauth/auth/authorize/signin?"
+                f"frame_id={self.frame_id}&skVersion=7&iframeId={self.frame_id}&"
+                f"client_id={self.client_id}&redirect_uri={self.home_url}&"
+                f"response_type=code&response_mode=web_message&state={self.frame_id}&"
+                f"language=zh_CN&authVersion=latest"
+            )
+            req1 = urllib.request.Request(u1, headers={"User-Agent": self.user_agent, "Accept": "*/*"})
+            with urllib.request.urlopen(req1, timeout=15, context=self.ctx) as resp:
+                self.update_from_headers(resp.getheaders())
 
         report("Step 2/10", "预热账号识别 (authFederate)...")
         u2 = f"https://{self.auth_host}/appleauth/auth/federate?isRememberMeEnabled=true"
@@ -381,6 +477,65 @@ class AppleProtocolLogin:
             except Exception as e:
                 report("Step 8/10", f"2sv/trust 响应: {e}")
 
+        if self.channel == "apple_account":
+            report("Step 9/10", "换取 Apple Account 管理中心会话 (gs/ws/token)...")
+            u9 = f"{self.home_url}/account/manage/gs/ws/token"
+            req9 = urllib.request.Request(u9, headers={
+                "User-Agent": self.user_agent,
+                "Accept": "application/json",
+                "Cookie": self.get_cookie_header(),
+            })
+            try:
+                with urllib.request.urlopen(req9, timeout=15, context=self.ctx) as resp:
+                    self.update_from_headers(resp.getheaders())
+                    report("Step 9/10", f"Apple Account 会话激活成功 (HTTP {resp.status})")
+            except Exception as e:
+                report("Step 9/10", f"gs/ws/token 响应: {e}")
+
+            report("Step 10/10", "提取 Apple Account 管理接口 apiKey 与令牌...")
+            u10 = f"{self.home_url}/account/manage"
+            req10 = urllib.request.Request(u10, headers={
+                "User-Agent": self.user_agent,
+                "Accept": "application/json, text/plain, */*",
+                "Referer": f"{self.home_url}/",
+                "Origin": self.home_url,
+                "Cookie": self.get_cookie_header(),
+            })
+            api_key = ""
+            try:
+                with urllib.request.urlopen(req10, timeout=15, context=self.ctx) as resp:
+                    self.update_from_headers(resp.getheaders())
+                    body_bytes = resp.read()
+                    try:
+                        data = json.loads(body_bytes.decode("utf-8"))
+                        api_key = data.get("apiKey", "")
+                    except Exception:
+                        pass
+            except Exception as e:
+                report("Step 10/10", f"获取 manage 状态: {e}")
+
+            if not api_key:
+                api_key = self.client_id
+
+            report("完成", f"Apple Account 协议登录成功！通道: apple_account, scnt 已捕获")
+            return {
+                "apple_id": self.apple_id,
+                "dsid": "apple_account",
+                "channel": "apple_account",
+                "host": "account.apple.com",
+                "client_id": self.client_id,
+                "client_build_number": "latest",
+                "client_mastering_number": "latest",
+                "cookie": self.get_cookie_header(),
+                "scnt": self.scnt,
+                "api_key": api_key,
+                "origin": self.home_url,
+                "referer": f"{self.home_url}/",
+                "user_agent": self.user_agent,
+                "selected_forward_to": self.apple_id,
+                "alias_count": 0,
+            }
+
         session_token = self.session_token or self.cookies.get("X-APPLE-DS-WEB-SESSION-TOKEN") or self.cookies.get("aasp", "")
         trust_token = self.trust_token
         if not trust_token:
@@ -441,16 +596,50 @@ class AppleProtocolLogin:
         premium_url = webservices.get("premiummailsettings", {}).get("url", "")
         parsed_host = urllib.parse.urlparse(premium_url).netloc or "p68-maildomainws.icloud.com"
 
-        report("完成", f"协议登录成功！DSID: {ds_info.get('dsid')}, Host: {parsed_host}")
+        channel_type = "icloud_web"
+        scnt_val = ""
+        api_key_val = ""
+
+        # In dual mode, seamlessly activate Apple Account management session as well
+        if self.channel in ("dual", "auto"):
+            report("Step 10/10", "联动激活 Apple Account 管理端通道 (scnt 与 apiKey)...")
+            try:
+                u_manage = "https://account.apple.com/account/manage"
+                req_m = urllib.request.Request(u_manage, headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    "Cookie": self.get_cookie_header(),
+                })
+                with urllib.request.urlopen(req_m, timeout=10, context=self.ctx) as m_resp:
+                    self.update_from_headers(m_resp.getheaders())
+                    body_text = m_resp.read().decode("utf-8", errors="replace")
+                    m_scnt = re.search(r'"scnt":\s*"([^"]+)"', body_text)
+                    if m_scnt:
+                        scnt_val = m_scnt.group(1)
+                    elif self.scnt:
+                        scnt_val = self.scnt
+
+                    api_key_val = "af1139274f266b22b68c2a3e7ad932cb3c0bbe854e13a79af78dcc73136882c3"
+
+                if scnt_val or api_key_val:
+                    channel_type = "dual"
+                    report("完成", f"双通道协议协商成功！[iCloud: {parsed_host}] + [Apple: scnt 凭证就绪]")
+            except Exception as e:
+                logger.warning(f"双通道联动获取 Apple Account 凭据略过: {e}")
+
+        if channel_type != "dual":
+            report("完成", f"协议登录成功！DSID: {ds_info.get('dsid')}, Host: {parsed_host}")
 
         return {
             "apple_id": ds_info.get("appleId", self.apple_id),
             "dsid": str(ds_info.get("dsid", "")),
+            "channel": channel_type,
             "host": parsed_host,
             "client_id": self.client_id,
             "client_build_number": "2622Build20",
             "client_mastering_number": "2622Build20",
             "cookie": self.get_cookie_header(),
+            "scnt": scnt_val,
+            "api_key": api_key_val,
             "origin": self.home_url,
             "referer": f"{self.home_url}/",
             "user_agent": self.user_agent,

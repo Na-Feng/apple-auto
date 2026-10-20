@@ -34,3 +34,8 @@ iCloud-Privacy-Mail/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Runtime data directory
+data/
+**/data/
+

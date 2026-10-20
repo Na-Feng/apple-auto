@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>iCloud 别名邮箱多账号智能管理平台</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=2.2">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>☁️</text></svg>">
 </head>
 <body>
@@ -25,6 +25,9 @@
         </button>
         <button class="nav-item" data-tab="accounts">
           <span class="icon">👥</span> 账号管理
+        </button>
+        <button class="nav-item" data-tab="proxy">
+          <span class="icon">🌐</span> 代理中枢
         </button>
         <button class="nav-item" data-tab="batch">
           <span class="icon">🚀</span> 批量创建
@@ -152,6 +155,19 @@
               </div>
             </div>
           </div>
+
+          <!-- Dashboard Recent Logs Card -->
+          <div class="card" style="margin-top: 20px;">
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+              <h3>最近系统事件</h3>
+              <button class="btn btn-sm btn-secondary" onclick="app.switchTab('logs')">查看完整日志 ➔</button>
+            </div>
+            <div class="card-body" style="padding:0;">
+              <div class="log-terminal" id="dash-recent-logs" style="height: 180px; border-radius: 0 0 var(--radius-lg) var(--radius-lg); font-size: 11px;">
+                <div class="log-line text-muted">正在加载最新事件...</div>
+              </div>
+            </div>
+          </div>
         </section>
 
         <!-- 2. ACCOUNTS VIEW -->
@@ -161,9 +177,10 @@
               <input type="text" class="input search-input" id="account-search" placeholder="筛选账号名称 / DSID..." oninput="app.filterAccounts()">
             </div>
             <div class="toolbar-right">
-              <button class="btn btn-primary" onclick="app.openProtocolImportModal()">⚡ 批量账号导入 (账号----密码----取码URL)</button>
+              <button class="btn btn-gradient" onclick="app.startAllAccountsAutopilot()">🤖 全部账号一键 750 托管</button>
+              <button class="btn btn-outline" onclick="app.stopAllAccountsAutopilot()">⏹️ 全部停止托管</button>
+              <button class="btn btn-primary" onclick="app.openProtocolImportModal()">⚡ 批量协议导入</button>
               <button class="btn btn-secondary" onclick="app.openImportModal()">📥 导入 cURL</button>
-              <button class="btn btn-secondary" onclick="app.openManualAccountModal()">✏️ 手动输入</button>
             </div>
           </div>
 
@@ -173,35 +190,157 @@
                 <tr>
                   <th>账号名称</th>
                   <th>通道 / Host</th>
-                  <th>状态</th>
-                  <th>远端别名数</th>
-                  <th>本地创建</th>
-                  <th>默认转发收件箱</th>
-                  <th>限流冷却状态</th>
+                  <th>专属代理 (Proxy)</th>
+                  <th>750 目标进度</th>
+                  <th>托管状态</th>
+                  <th>通道频控</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody id="accounts-table-body">
-                <tr><td colspan="8" class="text-center text-muted">加载中...</td></tr>
+                <tr><td colspan="7" class="text-center text-muted">加载中...</td></tr>
               </tbody>
             </table>
           </div>
         </section>
 
+        <!-- 2.5 PROXY HUB VIEW -->
+        <section id="view-proxy" class="tab-view">
+          <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 20px;">
+            <div class="stat-card">
+              <div class="stat-icon bg-blue">🌐</div>
+              <div class="stat-info">
+                <span class="stat-label">Resin 智能网关</span>
+                <span class="stat-val" id="resin-status-val" style="font-size:16px;">检测中...</span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon bg-green">⚡</div>
+              <div class="stat-info">
+                <span class="stat-label">可用代理节点</span>
+                <span class="stat-val" id="resin-nodes-val">0</span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon bg-purple">🌍</div>
+              <div class="stat-info">
+                <span class="stat-label">独立出口 IP</span>
+                <span class="stat-val" id="resin-ips-val">0</span>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon bg-amber">📋</div>
+              <div class="stat-info">
+                <span class="stat-label">活跃订阅源</span>
+                <span class="stat-val" id="resin-subs-val">0</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Action Card -->
+          <div class="card" style="margin-bottom: 20px; border-left: 4px solid var(--primary);">
+            <div class="card-body" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+              <div>
+                <h4 style="margin:0 0 4px 0; display:flex; align-items:center; gap:8px;">
+                  <span>🤖 账号智能粘性会话绑定 (Sticky Lease)</span>
+                  <span class="badge badge-success">推荐</span>
+                </h4>
+                <p class="text-muted" style="margin:0; font-size:13px;">
+                  Resin 网关通过 <code>http://Default.{账号ID}@127.0.0.1:2260</code> 为每个 Apple 账号锁定专属且稳定的出口 IP，即使底层节点闪退也会无感漂移至同 IP 节点，杜绝异地风控。
+                </p>
+              </div>
+              <div style="display:flex; gap:10px;">
+                <button class="btn btn-gradient" onclick="app.autoAssignResinProxies()">⚡ 一键为全部账号自动分配 Resin 粘性代理</button>
+                <button class="btn btn-secondary" onclick="app.restartResinGateway()">🔄 重启网关</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Subscriptions Table Card -->
+          <div class="card">
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <h3>Clash / YAML 代理订阅源列表</h3>
+                <span class="text-muted" style="font-size:12px;">系统自动聚合多订阅节点，并由 Resin 在后台进行健康检查与域名感知加权</span>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <button class="btn btn-primary" onclick="app.openAddSubscriptionModal()">➕ 添加订阅链接</button>
+                <button class="btn btn-secondary" onclick="app.loadProxyHub()">🔄 刷新</button>
+              </div>
+            </div>
+            <div class="card-body" style="padding:0;">
+              <div class="table-container">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>订阅名称</th>
+                      <th>订阅源地址 (URL)</th>
+                      <th>解析节点数</th>
+                      <th>健康出口 IP</th>
+                      <th>更新状态</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="subscriptions-table-body">
+                    <tr><td colspan="6" class="text-center text-muted">加载中...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- 3. BATCH CREATE VIEW -->
         <section id="view-batch" class="tab-view">
+          <!-- Autopilot Banner Card -->
+          <div class="autopilot-banner-card">
+            <div class="autopilot-header">
+              <div class="autopilot-title">
+                <span class="icon">🤖</span>
+                <div>
+                  <h4>全自动无人值守托管模式 (Auto-Pilot)</h4>
+                  <p>开启后系统全自动调度 Apple/iCloud 双通道。遇到官方频控限额自动休眠倒计时，额度恢复自动唤醒继续创建，直到达到满额 750 目标。</p>
+                </div>
+              </div>
+              <button type="button" class="btn btn-gradient" onclick="app.startAutopilotToTarget()">
+                🎯 一键托管补齐至 750 满额
+              </button>
+            </div>
+            <div class="autopilot-stats" id="autopilot-stats-bar">
+              <span>当前已有别名: <strong id="ap-stat-current">-</strong> / 750</span>
+              <span>距离满额还需: <strong id="ap-stat-needed" style="color:var(--primary); font-size:15px;">-</strong> 个</span>
+              <span class="text-muted">双通道智能轮换调度 · 后台保活心跳 24h 在线守护</span>
+            </div>
+          </div>
+
           <div class="grid-split">
             <!-- Left: Batch Form -->
             <div class="card">
               <div class="card-header">
-                <h3>新建批量创建任务</h3>
+                <h3>新建创建任务</h3>
               </div>
               <div class="card-body">
                 <form id="batch-form" onsubmit="app.submitBatchJob(event)">
                   <div class="form-group">
                     <label>创建数量 (个)</label>
-                    <input type="number" class="input" id="batch-count" min="1" max="500" value="10" required>
-                    <span class="form-hint">建议单批 10-50 个，系统会在账号间自动调配与限流保护</span>
+                    <input type="number" class="input" id="batch-count" min="1" max="1000" value="10" required>
+                    <div class="count-presets">
+                      <button type="button" class="btn-outline" onclick="app.setBatchCount(10)">10 个</button>
+                      <button type="button" class="btn-outline" onclick="app.setBatchCount(50)">50 个</button>
+                      <button type="button" class="btn-outline" onclick="app.setBatchCount(200)">200 个</button>
+                      <button type="button" class="btn-outline btn-accent" onclick="app.setBatchCount(750)">🎯 满额 750 个</button>
+                    </div>
+                    <span class="form-hint">支持单次输入多达 750 个别名，托管模式会自动分批跨频控周期执行</span>
+                  </div>
+
+                  <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                      <input type="checkbox" id="batch-auto-pilot" checked>
+                      <span><strong>启用全自动托管模式 (无人值守)</strong></span>
+                    </label>
+                    <span class="form-hint" style="margin-left:26px; display:block; margin-top:4px;">
+                      遇 Apple 官方频控限制时自动休眠倒计时，额度恢复后自动唤醒重试，期间保活心跳持续运行，无需人工守候
+                    </span>
                   </div>
 
                   <div class="form-group">
@@ -232,7 +371,7 @@
                   </div>
 
                   <div class="form-actions">
-                    <button type="submit" class="btn btn-primary btn-block">🚀 立即启动批量创建</button>
+                    <button type="submit" class="btn btn-primary btn-block">🚀 立即启动任务</button>
                   </div>
                 </form>
               </div>
@@ -253,6 +392,17 @@
                 </div>
 
                 <div id="active-task-details" style="display:none;">
+                  <!-- Autopilot cooldown live box -->
+                  <div id="autopilot-cooldown-box" class="autopilot-cooldown-box" style="display:none;">
+                    <div class="cooldown-badge">⏳ 自动托管休眠中</div>
+                    <div class="cooldown-timer" id="ap-countdown-timer">--:--</div>
+                    <p class="cooldown-msg" id="ap-cooldown-msg">触发 Apple 官方频控限制，系统正在休眠等待额度恢复...</p>
+                    <div class="cooldown-footer">
+                      <span>🛡️ Apple Account 动态保活心跳持续运行中</span>
+                      <button class="btn btn-sm btn-primary" onclick="app.forceWakeupTask()">⚡ 立即唤醒重试</button>
+                    </div>
+                  </div>
+
                   <div class="progress-wrap">
                     <div class="progress-info">
                       <strong id="batch-prog-counter">0 / 0</strong>
@@ -268,6 +418,11 @@
                     <div class="item-scroll-list" id="batch-items-container">
                       <!-- Rendered by JS -->
                     </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
                   </div>
                 </div>
               </div>
@@ -329,20 +484,28 @@
 
         <!-- 5. LOGS VIEW -->
         <section id="view-logs" class="tab-view">
-          <div class="section-toolbar">
-            <div class="toolbar-left">
+          <div class="section-toolbar" style="flex-wrap: wrap; gap: 12px;">
+            <div class="toolbar-left" style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
               <h3>系统实时事件流水</h3>
+              <div class="log-filter-group" style="display:flex; gap:6px;">
+                <button type="button" class="btn btn-sm btn-outline log-filter-btn active" data-filter="" onclick="app.setLogFilter('')">全部</button>
+                <button type="button" class="btn btn-sm btn-outline log-filter-btn" data-filter="SUCCESS" onclick="app.setLogFilter('SUCCESS')">成功</button>
+                <button type="button" class="btn btn-sm btn-outline log-filter-btn" data-filter="INFO" onclick="app.setLogFilter('INFO')">信息</button>
+                <button type="button" class="btn btn-sm btn-outline log-filter-btn" data-filter="WARNING" onclick="app.setLogFilter('WARNING')">告警</button>
+                <button type="button" class="btn btn-sm btn-outline log-filter-btn" data-filter="ERROR" onclick="app.setLogFilter('ERROR')">错误</button>
+              </div>
             </div>
-            <div class="toolbar-right">
-              <label class="checkbox-label">
-                <input type="checkbox" id="log-auto-refresh" checked> 自动刷新 (3s)
+            <div class="toolbar-right" style="display:flex; align-items:center; gap:12px;">
+              <span id="log-count-indicator" style="font-size:12px; color:var(--text-muted);">共 0 条</span>
+              <label class="checkbox-label" style="display:flex; align-items:center; gap:5px; font-size:12px;">
+                <input type="checkbox" id="log-auto-refresh" checked> 自动更新 (3s)
               </label>
-              <button class="btn btn-sm btn-secondary" onclick="app.loadLogs()">刷新日志</button>
+              <button type="button" class="btn btn-sm btn-secondary" onclick="app.loadLogs()">🔄 刷新日志</button>
             </div>
           </div>
 
           <div class="log-terminal" id="log-terminal">
-            <div class="log-line text-muted">等待日志加载...</div>
+            <div class="log-line text-muted">正在加载日志记录...</div>
           </div>
         </section>
 
@@ -362,6 +525,26 @@
           <strong>💡 纯协议全自动登录说明：</strong>
           <p style="margin: 4px 0;">无需打开浏览器，直接粘贴您的账号凭证行。系统全自动完成 <strong>Apple SRP-6a 安全握手</strong>、自动调用 <strong>取码链接</strong> 轮询捕获 6 位验证码、提交 2FA 完成双重认证，并建立长效信任会话！</p>
           <p style="margin: 4px 0;"><strong>支持格式：</strong><code>账号----密码----取码URL</code>（支持多行批量导入，分隔符支持 <code>----</code>、逗号、竖线 <code>|</code> 或空格）</p>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 14px; background: #f8fafc; padding: 10px 14px; border-radius: 8px; border: 1px solid #e2e8f0;">
+          <label style="font-weight: 600; display: block; margin-bottom: 6px;">接入通道模式：</label>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.95rem;">
+              <input type="radio" name="proto-channel" value="dual" checked>
+              <span>✨ <strong>智能双通道接入（强烈推荐）</strong> <small style="color:#10b981; font-weight:600;">(单账号同时支持 Apple 20/h + iCloud 5/h，按额度智能调度)</small></span>
+            </label>
+            <div style="display: flex; gap: 20px; margin-left: 24px; flex-wrap: wrap;">
+              <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.85rem; color:#64748b;">
+                <input type="radio" name="proto-channel" value="icloud_web">
+                <span>仅 ⚡ iCloud 通道</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.85rem; color:#64748b;">
+                <input type="radio" name="proto-channel" value="apple_account">
+                <span>仅 🍎 Apple 通道</span>
+              </label>
+            </div>
+          </div>
         </div>
 
         <div class="form-group" id="proto-input-group">
@@ -491,9 +674,65 @@
     </div>
   </div>
 
+  <!-- ACCOUNT PROXY & TARGET MODAL -->
+  <div class="modal" id="modal-proxy">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="proxy-modal-title">账号专属代理与 750 目标配置</h3>
+        <button class="close-btn" onclick="app.closeModal('modal-proxy')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="proxy-account-id">
+        <div class="form-group">
+          <label>专属代理地址 (Proxy URL)</label>
+          <input type="text" class="input" id="proxy-input-url" placeholder="例如: http://user:pass@127.0.0.1:7890 或 socks5://...">
+          <span class="form-hint">支持 HTTP、HTTPS、SOCKS5 格式。该账号所有通道、别名创建、保活心跳将全部走此独立代理，实现 IP 隔离与防限流。</span>
+        </div>
+        <div class="form-group">
+          <label>目标别名数 (默认 750)</label>
+          <input type="number" class="input" id="proxy-input-target" min="1" max="1000" value="750">
+          <span class="form-hint">该账号独立托管达成的总目标数，Apple 单账号物理上限为 750。</span>
+        </div>
+        <div id="proxy-test-result" style="display:none; padding:10px 14px; border-radius:6px; margin-bottom:12px; font-size:13px;"></div>
+      </div>
+      <div class="modal-footer" style="justify-content:space-between;">
+        <button type="button" class="btn btn-secondary" onclick="app.testProxyConnection()">⚡ 测试代理连通性</button>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn btn-outline" onclick="app.closeModal('modal-proxy')">取消</button>
+          <button type="button" class="btn btn-primary" onclick="app.saveAccountProxy()">💾 保存配置</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ADD SUBSCRIPTION MODAL -->
+  <div class="modal" id="modal-add-subscription">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>添加 Clash / YAML 代理订阅源</h3>
+        <button class="close-btn" onclick="app.closeModal('modal-add-subscription')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>订阅名称</label>
+          <input type="text" class="input" id="sub-input-name" placeholder="例如：主力订阅-机场A">
+        </div>
+        <div class="form-group">
+          <label>订阅链接 (URL)</label>
+          <textarea class="textarea" id="sub-input-url" rows="3" placeholder="https://your-provider.com/api/v1/client/subscribe?token=..."></textarea>
+          <span class="form-hint">支持 Clash YAML、Mihomo、V2Ray 等标准 HTTP/HTTPS 订阅链接。系统会自动提交给内置 Resin 网关进行节点拉取、去重和健康探活。</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="app.closeModal('modal-add-subscription')">取消</button>
+        <button class="btn btn-primary" onclick="app.saveSubscription()">💾 确认添加并同步节点</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div class="toast-container" id="toast-container"></div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=2.2"></script>
 </body>
 </html>

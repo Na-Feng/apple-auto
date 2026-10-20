@@ -54,6 +54,8 @@ class Database:
                 status TEXT NOT NULL DEFAULT 'active',
                 cooldown_until INTEGER NOT NULL DEFAULT 0,
                 cooldown_stage INTEGER NOT NULL DEFAULT 0,
+                apple_cooldown_until INTEGER NOT NULL DEFAULT 0,
+                icloud_cooldown_until INTEGER NOT NULL DEFAULT 0,
                 selected_forward_to TEXT NOT NULL DEFAULT '',
                 alias_count INTEGER NOT NULL DEFAULT 0,
                 local_alias_count INTEGER NOT NULL DEFAULT 0,
@@ -63,6 +65,24 @@ class Database:
                 updated_at INTEGER NOT NULL
             );
             """)
+
+            # Auto-migration for existing databases
+            for col, col_def in [
+                ("apple_cooldown_until", "INTEGER NOT NULL DEFAULT 0"),
+                ("icloud_cooldown_until", "INTEGER NOT NULL DEFAULT 0"),
+                ("password", "TEXT NOT NULL DEFAULT ''"),
+                ("code_url", "TEXT NOT NULL DEFAULT ''"),
+                ("target_alias_count", "INTEGER NOT NULL DEFAULT 750"),
+                ("proxy_url", "TEXT NOT NULL DEFAULT ''"),
+                ("autopilot_status", "TEXT NOT NULL DEFAULT 'idle'"),
+                ("autopilot_cooldown_until", "INTEGER NOT NULL DEFAULT 0"),
+                ("autopilot_last_error", "TEXT NOT NULL DEFAULT ''"),
+                ("apple_auth_expired", "INTEGER NOT NULL DEFAULT 0"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE accounts ADD COLUMN {col} {col_def};")
+                except sqlite3.OperationalError:
+                    pass
 
             # Aliases table
             conn.execute("""
@@ -97,10 +117,19 @@ class Database:
                 status TEXT NOT NULL DEFAULT 'queued',
                 current_account_name TEXT NOT NULL DEFAULT '',
                 last_error TEXT NOT NULL DEFAULT '',
+                auto_pilot INTEGER NOT NULL DEFAULT 1,
+                cooldown_resume_at INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
             """)
+
+            # Auto-migrate batch_jobs columns if upgrading from earlier version
+            for col, col_def in [("auto_pilot", "INTEGER NOT NULL DEFAULT 1"), ("cooldown_resume_at", "INTEGER NOT NULL DEFAULT 0")]:
+                try:
+                    conn.execute(f"ALTER TABLE batch_jobs ADD COLUMN {col} {col_def};")
+                except Exception:
+                    pass
 
             # Batch Items table (for intent tracking and resilience)
             conn.execute("""
@@ -130,6 +159,16 @@ class Database:
                 created_at INTEGER NOT NULL
             );
             """)
+
+            # Proxy Subscriptions table
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS proxy_subscriptions (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                url TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_created ON system_logs(created_at DESC);")
             conn.commit()
 
@@ -137,21 +176,85 @@ class Database:
     # ACCOUNT OPERATIONS
     # ==========================
 
+    def get_account_by_apple_id(self, apple_id: str) -> Optional[AccountModel]:
+        if not apple_id:
+            return None
+        with self._lock, self._get_connection() as conn:
+            cur = conn.execute("SELECT * FROM accounts WHERE LOWER(apple_id) = LOWER(?) LIMIT 1", (apple_id.strip(),))
+            row = cur.fetchone()
+            if not row:
+                return None
+            return AccountModel(**dict(row))
+
     def save_account(self, account: AccountModel) -> None:
         with self._lock, self._get_connection() as conn:
+            # Intelligent merge if account with same apple_id exists
+            if account.apple_id:
+                cur = conn.execute("SELECT * FROM accounts WHERE LOWER(apple_id) = LOWER(?) LIMIT 1", (account.apple_id.strip(),))
+                row = cur.fetchone()
+                if row:
+                    existing = AccountModel(**dict(row))
+                    if existing.id != account.id:
+                        account.id = existing.id
+
+                    # Merge credentials
+                    if not account.dsid or account.dsid == "apple_account":
+                        account.dsid = existing.dsid
+                    if not account.host or "maildomainws" not in account.host:
+                        if existing.host and "maildomainws" in existing.host:
+                            account.host = existing.host
+                    if not account.scnt and existing.scnt:
+                        account.scnt = existing.scnt
+                    if not account.api_key and existing.api_key:
+                        account.api_key = existing.api_key
+                    if not account.selected_forward_to and existing.selected_forward_to:
+                        account.selected_forward_to = existing.selected_forward_to
+                    if existing.alias_count > 0 and account.alias_count == 0:
+                        account.alias_count = existing.alias_count
+
+                    if not account.password and existing.password:
+                        account.password = existing.password
+                    if not account.code_url and existing.code_url:
+                        account.code_url = existing.code_url
+                    if not account.proxy_url and existing.proxy_url:
+                        account.proxy_url = existing.proxy_url
+                    if existing.target_alias_count and not account.target_alias_count:
+                        account.target_alias_count = existing.target_alias_count
+
+                    # Merge cookies
+                    cookies_dict = {}
+                    for c_str in (existing.cookie, account.cookie):
+                        for part in c_str.split(";"):
+                            if "=" in part:
+                                k, v = part.strip().split("=", 1)
+                                cookies_dict[k.strip()] = v.strip()
+                    account.cookie = "; ".join(f"{k}={v}" for k, v in cookies_dict.items())
+
+            # Mark dual if both channel credentials exist
+            has_icloud = bool(account.host and "maildomainws" in account.host)
+            has_apple = bool(account.scnt or account.api_key)
+            if has_icloud and has_apple:
+                account.channel = "dual"
+
             conn.execute("""
             INSERT INTO accounts (
                 id, name, apple_id, dsid, client_id, client_build_number,
                 client_mastering_number, host, cookie, origin, referer,
                 user_agent, lang_code, channel, scnt, api_key, status,
-                cooldown_until, cooldown_stage, selected_forward_to, alias_count,
-                local_alias_count, last_checked_at, last_error, created_at, updated_at
+                cooldown_until, cooldown_stage, apple_cooldown_until, icloud_cooldown_until,
+                selected_forward_to, alias_count,
+                local_alias_count, last_checked_at, last_error, password, code_url,
+                target_alias_count, proxy_url, autopilot_status, autopilot_cooldown_until, autopilot_last_error,
+                created_at, updated_at
             ) VALUES (
                 :id, :name, :apple_id, :dsid, :client_id, :client_build_number,
                 :client_mastering_number, :host, :cookie, :origin, :referer,
                 :user_agent, :lang_code, :channel, :scnt, :api_key, :status,
-                :cooldown_until, :cooldown_stage, :selected_forward_to, :alias_count,
-                :local_alias_count, :last_checked_at, :last_error, :created_at, :updated_at
+                :cooldown_until, :cooldown_stage, :apple_cooldown_until, :icloud_cooldown_until,
+                :selected_forward_to, :alias_count,
+                :local_alias_count, :last_checked_at, :last_error, :password, :code_url,
+                :target_alias_count, :proxy_url, :autopilot_status, :autopilot_cooldown_until, :autopilot_last_error,
+                :created_at, :updated_at
             )
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name,
@@ -172,11 +275,20 @@ class Database:
                 status=excluded.status,
                 cooldown_until=excluded.cooldown_until,
                 cooldown_stage=excluded.cooldown_stage,
+                apple_cooldown_until=excluded.apple_cooldown_until,
+                icloud_cooldown_until=excluded.icloud_cooldown_until,
                 selected_forward_to=excluded.selected_forward_to,
                 alias_count=excluded.alias_count,
                 local_alias_count=excluded.local_alias_count,
                 last_checked_at=excluded.last_checked_at,
                 last_error=excluded.last_error,
+                password=excluded.password,
+                code_url=excluded.code_url,
+                target_alias_count=excluded.target_alias_count,
+                proxy_url=excluded.proxy_url,
+                autopilot_status=excluded.autopilot_status,
+                autopilot_cooldown_until=excluded.autopilot_cooldown_until,
+                autopilot_last_error=excluded.autopilot_last_error,
                 updated_at=excluded.updated_at;
             """, account.__dict__)
             conn.commit()
@@ -195,14 +307,18 @@ class Database:
             return [AccountModel(**dict(row)) for row in cur.fetchall()]
 
     def get_available_accounts(self) -> List[AccountModel]:
-        now = int(time.time())
         with self._lock, self._get_connection() as conn:
-            cur = conn.execute("""
-            SELECT * FROM accounts
-            WHERE status = 'active' AND cooldown_until <= ?
-            ORDER BY cooldown_until ASC, created_at ASC
-            """, (now,))
-            return [AccountModel(**dict(row)) for row in cur.fetchall()]
+            cur = conn.execute("SELECT * FROM accounts WHERE status IN ('active', 'cooling_down') ORDER BY created_at ASC")
+            accs = [AccountModel(**dict(row)) for row in cur.fetchall()]
+            available = []
+            for a in accs:
+                if not a.is_cooling_down:
+                    if a.status == "cooling_down":
+                        conn.execute("UPDATE accounts SET status = 'active', cooldown_until = 0, last_error = '' WHERE id = ?", (a.id,))
+                        a.status = "active"
+                    available.append(a)
+            conn.commit()
+            return available
 
     def delete_account(self, account_id: str) -> bool:
         with self._lock, self._get_connection() as conn:
@@ -231,14 +347,89 @@ class Database:
             """, (until, stage, last_error, now, account_id))
             conn.commit()
 
+    def set_channel_cooldown(self, account_id: str, channel: str, cooldown_seconds: int, last_error: str = "") -> None:
+        now = int(time.time())
+        until = now + cooldown_seconds
+        with self._lock, self._get_connection() as conn:
+            cur = conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,))
+            row = cur.fetchone()
+            if not row:
+                return
+            acc = AccountModel(**dict(row))
+
+            apple_until = until if channel == "apple_account" else acc.apple_cooldown_until
+            icloud_until = until if channel == "icloud_web" else acc.icloud_cooldown_until
+
+            if acc.channel == "dual":
+                both_cooling = (apple_until > now) and (icloud_until > now)
+                account_cooldown = min(apple_until, icloud_until) if both_cooling else 0
+                status = "cooling_down" if both_cooling else "active"
+            elif channel == "apple_account":
+                account_cooldown = apple_until
+                status = "cooling_down"
+            else:
+                account_cooldown = icloud_until
+                status = "cooling_down"
+
+            conn.execute("""
+            UPDATE accounts
+            SET status = ?, cooldown_until = ?, apple_cooldown_until = ?, icloud_cooldown_until = ?, last_error = ?, updated_at = ?
+            WHERE id = ?
+            """, (status, account_cooldown, apple_until, icloud_until, last_error, now, account_id))
+            conn.commit()
+
     def clear_account_cooldown(self, account_id: str) -> None:
         now = int(time.time())
         with self._lock, self._get_connection() as conn:
             conn.execute("""
             UPDATE accounts
-            SET status = 'active', cooldown_until = 0, cooldown_stage = 0, last_error = '', updated_at = ?
+            SET status = 'active', cooldown_until = 0, cooldown_stage = 0,
+                apple_cooldown_until = 0, icloud_cooldown_until = 0,
+                last_error = '', updated_at = ?
             WHERE id = ?
             """, (now, account_id))
+            conn.commit()
+
+    def set_apple_auth_expired(self, account_id: str, expired: bool = True, last_error: str = "") -> None:
+        now = int(time.time())
+        with self._lock, self._get_connection() as conn:
+            conn.execute("""
+            UPDATE accounts
+            SET apple_auth_expired = ?, apple_cooldown_until = 0, last_error = ?, updated_at = ?
+            WHERE id = ?
+            """, (1 if expired else 0, last_error, now, account_id))
+            conn.commit()
+
+    def update_account_autopilot_status(
+        self, account_id: str, status: str, cooldown_until: int = 0, last_error: str = ""
+    ) -> None:
+        now = int(time.time())
+        with self._lock, self._get_connection() as conn:
+            conn.execute("""
+            UPDATE accounts
+            SET autopilot_status = ?, autopilot_cooldown_until = ?, autopilot_last_error = ?, updated_at = ?
+            WHERE id = ?
+            """, (status, cooldown_until, last_error, now, account_id))
+            conn.commit()
+
+    def set_account_proxy(self, account_id: str, proxy_url: str) -> None:
+        now = int(time.time())
+        with self._lock, self._get_connection() as conn:
+            conn.execute("""
+            UPDATE accounts
+            SET proxy_url = ?, updated_at = ?
+            WHERE id = ?
+            """, (proxy_url.strip(), now, account_id))
+            conn.commit()
+
+    def set_account_target(self, account_id: str, target_count: int) -> None:
+        now = int(time.time())
+        with self._lock, self._get_connection() as conn:
+            conn.execute("""
+            UPDATE accounts
+            SET target_alias_count = ?, updated_at = ?
+            WHERE id = ?
+            """, (target_count, now, account_id))
             conn.commit()
 
     def update_account_check_result(
@@ -263,6 +454,16 @@ class Database:
                 updated_at = ?
             WHERE id = ?
             """, (now, account_id))
+            conn.commit()
+
+    def set_apple_auth_expired(self, account_id: str, expired: bool = True, last_error: str = "") -> None:
+        now = int(time.time())
+        with self._lock, self._get_connection() as conn:
+            conn.execute("""
+            UPDATE accounts
+            SET apple_auth_expired = ?, apple_cooldown_until = 0, last_error = ?, updated_at = ?
+            WHERE id = ?
+            """, (1 if expired else 0, last_error, now, account_id))
             conn.commit()
 
     # ==========================
@@ -349,18 +550,27 @@ class Database:
 
     def create_batch_job(self, job: BatchJobModel) -> None:
         with self._lock, self._get_connection() as conn:
+            d = dict(job.__dict__)
+            d["auto_pilot"] = 1 if d.get("auto_pilot", True) else 0
+            d["cooldown_resume_at"] = int(d.get("cooldown_resume_at", 0))
             conn.execute("""
             INSERT INTO batch_jobs (
                 id, total_requested, created_count, failed_count, strategy,
                 target_account_id, base_label, note, status, current_account_name,
-                last_error, created_at, updated_at
+                last_error, auto_pilot, cooldown_resume_at, created_at, updated_at
             ) VALUES (
                 :id, :total_requested, :created_count, :failed_count, :strategy,
                 :target_account_id, :base_label, :note, :status, :current_account_name,
-                :last_error, :created_at, :updated_at
+                :last_error, :auto_pilot, :cooldown_resume_at, :created_at, :updated_at
             )
-            """, job.__dict__)
+            """, d)
             conn.commit()
+
+    def _row_to_batch_job(self, row: Any) -> BatchJobModel:
+        d = dict(row)
+        d["auto_pilot"] = bool(d.get("auto_pilot", 1))
+        d["cooldown_resume_at"] = int(d.get("cooldown_resume_at", 0))
+        return BatchJobModel(**d)
 
     def get_batch_job(self, job_id: str) -> Optional[BatchJobModel]:
         with self._lock, self._get_connection() as conn:
@@ -368,23 +578,26 @@ class Database:
             row = cur.fetchone()
             if not row:
                 return None
-            return BatchJobModel(**dict(row))
+            return self._row_to_batch_job(row)
 
     def get_active_batch_job(self) -> Optional[BatchJobModel]:
         with self._lock, self._get_connection() as conn:
             cur = conn.execute("""
             SELECT * FROM batch_jobs
-            WHERE status IN ('queued', 'running', 'paused')
+            WHERE status IN ('queued', 'running', 'paused', 'waiting_cooldown')
             ORDER BY created_at DESC LIMIT 1
             """)
             row = cur.fetchone()
             if not row:
                 return None
-            return BatchJobModel(**dict(row))
+            return self._row_to_batch_job(row)
 
     def update_batch_job(self, job: BatchJobModel) -> None:
         job.updated_at = int(time.time())
         with self._lock, self._get_connection() as conn:
+            d = dict(job.__dict__)
+            d["auto_pilot"] = 1 if d.get("auto_pilot", True) else 0
+            d["cooldown_resume_at"] = int(d.get("cooldown_resume_at", 0))
             conn.execute("""
             UPDATE batch_jobs
             SET created_count = :created_count,
@@ -392,9 +605,11 @@ class Database:
                 status = :status,
                 current_account_name = :current_account_name,
                 last_error = :last_error,
+                auto_pilot = :auto_pilot,
+                cooldown_resume_at = :cooldown_resume_at,
                 updated_at = :updated_at
             WHERE id = :id
-            """, job.__dict__)
+            """, d)
             conn.commit()
 
     def add_batch_item(
@@ -409,15 +624,31 @@ class Database:
             conn.commit()
 
     def update_batch_item(
-        self, item_id: str, status: str, candidate: str = "", created_email: str = "", error: str = ""
+        self,
+        item_id: str,
+        status: str,
+        candidate: Optional[str] = None,
+        created_email: Optional[str] = None,
+        error: Optional[str] = None,
+        error_message: Optional[str] = None,
     ) -> None:
         now = int(time.time())
+        err = error if error is not None else error_message
+        updates = ["status = ?", "updated_at = ?"]
+        params: list = [status, now]
+        if candidate is not None:
+            updates.append("candidate_email = ?")
+            params.append(candidate)
+        if created_email is not None:
+            updates.append("created_email = ?")
+            params.append(created_email)
+        if err is not None:
+            updates.append("error_message = ?")
+            params.append(err)
+        params.append(item_id)
+        sql = f"UPDATE batch_items SET {', '.join(updates)} WHERE id = ?"
         with self._lock, self._get_connection() as conn:
-            conn.execute("""
-            UPDATE batch_items
-            SET status = ?, candidate_email = ?, created_email = ?, error_message = ?, updated_at = ?
-            WHERE id = ?
-            """, (status, candidate, created_email, error, now, item_id))
+            conn.execute(sql, tuple(params))
             conn.commit()
 
     def get_job_items(self, job_id: str) -> List[dict]:
@@ -476,6 +707,31 @@ class Database:
                 "total_aliases": total_aliases,
                 "today_aliases": today_aliases,
             }
+
+    # ==========================
+    # PROXY SUBSCRIPTIONS
+    # ==========================
+
+    def save_subscription(self, sub_id: str, name: str, url: str) -> None:
+        with self._lock, self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO proxy_subscriptions (id, name, url, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET name = excluded.name, url = excluded.url;
+                """,
+                (sub_id, name, url, int(time.time())),
+            )
+
+    def delete_subscription(self, sub_id: str) -> bool:
+        with self._lock, self._get_connection() as conn:
+            cur = conn.execute("DELETE FROM proxy_subscriptions WHERE id = ?", (sub_id,))
+            return cur.rowcount > 0
+
+    def get_all_subscriptions(self) -> List[Dict[str, Any]]:
+        with self._lock, self._get_connection() as conn:
+            cur = conn.execute("SELECT * FROM proxy_subscriptions ORDER BY created_at DESC")
+            return [dict(r) for r in cur.fetchall()]
 
 
 # Singleton database instance

@@ -105,6 +105,9 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", f"{mime_type}; charset=utf-8")
             self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
             self._send_cors_headers()
             self.end_headers()
             self.wfile.write(content)
@@ -116,6 +119,34 @@ class RequestHandler(BaseHTTPRequestHandler):
         pass
 
 
+def _start_keepalive_worker() -> None:
+    """Background daemon thread that periodically renews active Apple Account sessions every 180 seconds."""
+    import time
+    import threading
+    from core.db import db
+    from core.client_apple_account import AppleAccountClient
+
+    def _loop():
+        time.sleep(10)
+        while True:
+            try:
+                accounts = db.get_all_accounts()
+                for acc in accounts:
+                    if acc.has_apple_account and acc.status in ("active", "cooling_down"):
+                        try:
+                            client = AppleAccountClient(acc)
+                            client.keepalive()
+                        except Exception as e:
+                            logger.warning(f"账号 [{acc.name}] 周期保活心跳异常: {e}", acc.id)
+            except Exception as e:
+                logger.warning(f"保活轮询工作线程异常: {e}")
+            time.sleep(180)
+
+    t = threading.Thread(target=_loop, daemon=True, name="apple-keepalive-worker")
+    t.start()
+    logger.info("Apple Account 动态保活守护进程已就绪 (心跳周期: 180 秒)")
+
+
 def run_server(host: str = "0.0.0.0", port: int = 8080) -> None:
     server_address = (host, port)
     httpd = ThreadingHTTPServer(server_address, RequestHandler)
@@ -125,6 +156,28 @@ def run_server(host: str = "0.0.0.0", port: int = 8080) -> None:
     logger.info(f"本地控制台访问: http://{display_host}:{port}")
     logger.info(f"局域网访问:     http://0.0.0.0:{port}")
     logger.info(f"============================================================")
+
+    # Launch background keepalive worker for Apple Account channel
+    _start_keepalive_worker()
+
+    # Automatically start embedded Resin Proxy Gateway if present
+    try:
+        from core.resin_manager import resin_manager
+        if resin_manager.is_installed():
+            resin_manager.start()
+            from core.db import db
+            for sub in db.get_all_subscriptions():
+                resin_manager.add_subscription(sub["name"], sub["url"])
+    except Exception as e:
+        logger.warning(f"Resin 网关自启动与订阅恢复异常: {e}")
+
+    # Automatically resume any ongoing autopilot task if server restarted
+    try:
+        from core.scheduler import scheduler, account_autopilot
+        scheduler.resume_active_job_if_any()
+        account_autopilot.resume_all_active()
+    except Exception as e:
+        logger.warning(f"自动恢复活跃任务检查异常: {e}")
 
     try:
         httpd.serve_forever()
