@@ -674,6 +674,79 @@
     </div>
   </div>
 
+  <!-- EDIT ACCOUNT MODAL -->
+  <div class="modal" id="modal-edit-account">
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <h3 id="edit-account-modal-title">✏️ 编辑账号配置与凭据</h3>
+        <button class="close-btn" onclick="app.closeModal('modal-edit-account')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="edit-account-id">
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+          <div class="form-group">
+            <label>账号显示名称</label>
+            <input type="text" class="input" id="edit-account-name" placeholder="起个容易分辨的名字">
+          </div>
+          <div class="form-group">
+            <label>Apple ID 登录邮箱</label>
+            <input type="text" class="input" id="edit-account-apple-id" placeholder="例如：user@domain.com">
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+          <div class="form-group">
+            <label>Apple ID 登录密码 (用于自动登录换证)</label>
+            <div style="position: relative; display: flex; align-items: center;">
+              <input type="password" class="input" id="edit-account-password" placeholder="留空则保持原密码不变" style="padding-right: 40px;">
+              <button type="button" class="btn btn-sm" id="btn-toggle-edit-password" onclick="app.toggleEditPasswordVisibility()" style="position: absolute; right: 6px; background: transparent; border: none; font-size: 16px; cursor: pointer;" title="显示/隐藏密码">👁️</button>
+            </div>
+            <span class="form-hint">会话过期时，系统自动调用取码 URL 与密码静默完成 2FA 重登。</span>
+          </div>
+          <div class="form-group">
+            <label>2FA 短信/邮件取码 URL</label>
+            <input type="text" class="input" id="edit-account-code-url" placeholder="http://orangeid.top/api/code/get?id=...">
+            <span class="form-hint">接码平台 API 接口，用于自动化捕获 6 位双重认证码。</span>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 15px;">
+          <div class="form-group">
+            <label>专属代理地址 (Proxy URL)</label>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" class="input" id="edit-account-proxy-url" placeholder="http://127.0.0.1:7890 或 socks5://...">
+              <button type="button" class="btn btn-secondary" style="white-space: nowrap;" onclick="app.testEditProxyConnection()">⚡ 测试代理</button>
+            </div>
+            <span class="form-hint">该账号所有协议请求走专属代理，留空为直连。</span>
+          </div>
+          <div class="form-group">
+            <label>目标别名数 (默认 750)</label>
+            <input type="number" class="input" id="edit-account-target" min="1" max="1000" value="750">
+            <span class="form-hint">达成该额度后自动停止创建。</span>
+          </div>
+        </div>
+
+        <div id="edit-proxy-test-result" style="display:none; padding:10px 14px; border-radius:6px; margin-bottom:12px; font-size:13px;"></div>
+
+        <div class="form-group" style="margin-top: 5px;">
+          <label style="display:flex; justify-content:space-between; align-items:center;">
+            <span>更新会话凭据 (可选，粘贴新 cURL 或 Cookie 原文)</span>
+            <span class="text-muted" style="font-size:11px; font-weight:normal;">若手动抓包抓取了新会话可在此粘贴解析</span>
+          </label>
+          <textarea class="textarea" id="edit-account-raw-text" rows="4" placeholder="可选粘贴：curl 'https://account.apple.com/...' 或 curl 'https://pXX-maildomainws.icloud.com/...'"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content: space-between;">
+        <button type="button" class="btn btn-outline" onclick="app.closeModal('modal-edit-account')">取消</button>
+        <div style="display: flex; gap: 10px;">
+          <button type="button" class="btn btn-primary" onclick="app.saveAccountEdit(false)">💾 保存配置</button>
+          <button type="button" class="btn btn-gradient" onclick="app.saveAccountEdit(true)" title="保存并立即在后台启动无痕浏览器自动登录换证">🚀 保存并自动重登换证</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ACCOUNT PROXY & TARGET MODAL -->
   <div class="modal" id="modal-proxy">
     <div class="modal-content">
@@ -733,6 +806,6 @@
   <!-- Toast Container -->
   <div class="toast-container" id="toast-container"></div>
 
-  <script src="app.js?v=2.2"></script>
+  <script src="app.js?v=2.3"></script>
 </body>
 </html>

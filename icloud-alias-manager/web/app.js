@@ -253,6 +253,7 @@ const app = {
           <td>
             <div style="display:flex; gap:5px; flex-wrap:wrap;">
               ${apActionBtn}
+              <button class="btn btn-sm btn-primary" onclick="app.openEditAccountModal('${acc.id}')" title="编辑账号信息、密码、取码与代理">✏️ 编辑</button>
               <button class="btn btn-sm btn-secondary" onclick="app.openProxyModal('${acc.id}')" title="配置代理与目标">⚙️ 代理</button>
               <button class="btn btn-sm btn-secondary" onclick="app.syncAccount('${acc.id}')" title="同步远端已存在别名">🔄 同步</button>
               <button class="btn btn-sm btn-danger" onclick="app.deleteAccount('${acc.id}', '${this.escapeHtml(acc.name)}')" title="删除账号">🗑️</button>
@@ -328,6 +329,119 @@ const app = {
       this.loadStats();
     } else {
       this.showToast(res.error || "删除失败", "error");
+    }
+  },
+
+  // ==========================
+  // ACCOUNT EDIT MODAL
+  // ==========================
+
+  openEditAccountModal(accId) {
+    const acc = this.accounts.find(a => a.id === accId);
+    if (!acc) return;
+    document.getElementById("edit-account-id").value = acc.id;
+    document.getElementById("edit-account-modal-title").textContent = `✏️ 编辑账号：${acc.name}`;
+    document.getElementById("edit-account-name").value = acc.name || "";
+    document.getElementById("edit-account-apple-id").value = acc.apple_id || "";
+    document.getElementById("edit-account-password").value = acc.password || "";
+    document.getElementById("edit-account-password").type = "password";
+    const toggleBtn = document.getElementById("btn-toggle-edit-password");
+    if (toggleBtn) toggleBtn.textContent = "👁️";
+
+    document.getElementById("edit-account-code-url").value = acc.code_url || "";
+    document.getElementById("edit-account-proxy-url").value = acc.proxy_url || "";
+    document.getElementById("edit-account-target").value = acc.target_alias_count || 750;
+    document.getElementById("edit-account-raw-text").value = "";
+
+    const resBox = document.getElementById("edit-proxy-test-result");
+    if (resBox) resBox.style.display = "none";
+
+    this.openModal("modal-edit-account");
+  },
+
+  toggleEditPasswordVisibility() {
+    const pwdInput = document.getElementById("edit-account-password");
+    const toggleBtn = document.getElementById("btn-toggle-edit-password");
+    if (!pwdInput) return;
+    if (pwdInput.type === "password") {
+      pwdInput.type = "text";
+      if (toggleBtn) toggleBtn.textContent = "🙈";
+    } else {
+      pwdInput.type = "password";
+      if (toggleBtn) toggleBtn.textContent = "👁️";
+    }
+  },
+
+  async testEditProxyConnection() {
+    const proxyUrl = document.getElementById("edit-account-proxy-url").value.trim();
+    const accId = document.getElementById("edit-account-id").value;
+    const resBox = document.getElementById("edit-proxy-test-result");
+
+    if (!proxyUrl) {
+      resBox.style.display = "block";
+      resBox.style.background = "#fef2f2";
+      resBox.style.color = "#991b1b";
+      resBox.textContent = "请输入代理地址再进行测试";
+      return;
+    }
+
+    resBox.style.display = "block";
+    resBox.style.background = "#eff6ff";
+    resBox.style.color = "#1e40af";
+    resBox.textContent = "正在测试代理网络连通性与公网出口 IP...";
+
+    const res = await this.apiPost(`/api/accounts/${accId}/proxy/test`, { proxy_url: proxyUrl });
+    if (res.ok && res.data) {
+      resBox.style.background = "#ecfdf5";
+      resBox.style.color = "#065f46";
+      resBox.innerHTML = `✅ 代理连通正常！<br>• 出口公网 IP: <strong>${res.data.exit_ip}</strong><br>• 握手延迟: <strong>${res.data.latency_ms} ms</strong>`;
+    } else {
+      resBox.style.background = "#fef2f2";
+      resBox.style.color = "#991b1b";
+      resBox.textContent = `❌ ${res.error || "代理连接失败，请检查 IP/端口/鉴权"}`;
+    }
+  },
+
+  async saveAccountEdit(reacquire = false) {
+    const accId = document.getElementById("edit-account-id").value;
+    const name = document.getElementById("edit-account-name").value.trim();
+    const appleId = document.getElementById("edit-account-apple-id").value.trim();
+    const password = document.getElementById("edit-account-password").value.trim();
+    const codeUrl = document.getElementById("edit-account-code-url").value.trim();
+    const proxyUrl = document.getElementById("edit-account-proxy-url").value.trim();
+    const targetCount = parseInt(document.getElementById("edit-account-target").value, 10) || 750;
+    const rawText = document.getElementById("edit-account-raw-text").value.trim();
+
+    if (!name) {
+      this.showToast("请输入账号名称", "error");
+      return;
+    }
+
+    if (reacquire && (!password || !codeUrl)) {
+      this.showToast("自动重登换证必须填写登录密码与取码 URL！", "error");
+      return;
+    }
+
+    const payload = {
+      name: name,
+      apple_id: appleId,
+      password: password,
+      code_url: codeUrl,
+      proxy_url: proxyUrl,
+      target_alias_count: targetCount,
+      raw_text: rawText,
+      reacquire: reacquire,
+    };
+
+    this.showToast(reacquire ? "正在保存并启动后台自动登录换证..." : "正在保存账号配置...", "info");
+
+    const res = await this.apiPost(`/api/accounts/${accId}/edit`, payload);
+    if (res.ok) {
+      this.showToast(res.message || "账号配置已保存", "success");
+      this.closeModal("modal-edit-account");
+      this.loadAccounts();
+    } else {
+      this.showToast(res.error || "保存账号配置失败", "error");
     }
   },
 

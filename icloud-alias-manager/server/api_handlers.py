@@ -89,6 +89,10 @@ class ApiHandler:
                 logger.info(f"已更新账号代理与目标配置：代理={proxy_url or '直连'}, 目标={target_count}", acc_id)
                 return 200, {"ok": True, "message": "代理与目标配置已保存"}, headers
 
+            if path.startswith("/api/accounts/") and path.endswith("/edit") and method == "POST":
+                acc_id = path.split("/")[3]
+                return ApiHandler._edit_account(acc_id, body_json or {})
+
             if path.startswith("/api/accounts/") and path.endswith("/clear-cooldown") and method == "POST":
                 acc_id = path.split("/")[3]
                 db.clear_account_cooldown(acc_id)
@@ -795,3 +799,150 @@ class ApiHandler:
                     }, headers
         except Exception as e:
             return 200, {"ok": False, "error": f"代理测试连接失败: {e}"}, headers
+
+    @staticmethod
+    def _edit_account(acc_id: str, data: Dict[str, Any]) -> Tuple[int, Any, Dict[str, str]]:
+        headers = {"Content-Type": "application/json; charset=utf-8"}
+        account = db.get_account(acc_id)
+        if not account:
+            return 404, {"ok": False, "error": "账号不存在"}, headers
+
+        name = str(data.get("name", "")).strip()
+        apple_id = str(data.get("apple_id", "")).strip()
+        password = str(data.get("password", "")).strip()
+        code_url = str(data.get("code_url", "")).strip()
+        proxy_url = str(data.get("proxy_url", "")).strip()
+        target_count = int(data.get("target_alias_count", 750) or 750)
+        raw_text = str(data.get("raw_text", "")).strip()
+        reacquire = bool(data.get("reacquire", False))
+
+        new_cookie = None
+        new_host = None
+        new_dsid = None
+        new_scnt = None
+        new_api_key = None
+        new_channel = None
+        clear_expired = False
+
+        if raw_text:
+            try:
+                parsed = parse_any_session_input(raw_text)
+                if parsed.get("cookie"):
+                    cookies_dict = {}
+                    for part in (account.cookie or "").split(";"):
+                        if "=" in part:
+                            k, v = part.strip().split("=", 1)
+                            if k.strip() and v.strip():
+                                cookies_dict[k.strip()] = v.strip()
+                    for part in parsed["cookie"].split(";"):
+                        if "=" in part:
+                            k, v = part.strip().split("=", 1)
+                            if k.strip() and v.strip():
+                                cookies_dict[k.strip()] = v.strip()
+                    new_cookie = "; ".join(f"{k}={v}" for k, v in cookies_dict.items())
+
+                if parsed.get("host") and "maildomainws" in parsed["host"]:
+                    new_host = parsed["host"]
+                if parsed.get("dsid") and parsed["dsid"] != "apple_account":
+                    new_dsid = parsed["dsid"]
+                if parsed.get("scnt"):
+                    new_scnt = parsed["scnt"]
+                if parsed.get("api_key"):
+                    new_api_key = parsed["api_key"]
+
+                calc_host = new_host or account.host
+                calc_apple = bool(new_scnt or account.scnt or new_api_key or account.api_key)
+                calc_icloud = bool(calc_host and "maildomainws" in calc_host)
+                if calc_icloud and calc_apple:
+                    new_channel = "dual"
+                elif calc_apple:
+                    new_channel = "apple_account"
+                elif calc_icloud:
+                    new_channel = "icloud_web"
+
+                clear_expired = True
+            except Exception as e:
+                return 400, {"ok": False, "error": f"凭证内容解析失败: {e}"}, headers
+
+        db.update_account_profile(
+            account_id=acc_id,
+            name=name,
+            apple_id=apple_id,
+            password=password,
+            code_url=code_url,
+            proxy_url=proxy_url,
+            target_alias_count=target_count,
+            cookie=new_cookie,
+            host=new_host,
+            dsid=new_dsid,
+            scnt=new_scnt,
+            api_key=new_api_key,
+            channel=new_channel,
+            clear_expired=clear_expired,
+        )
+
+        updated_acc = db.get_account(acc_id)
+        if not updated_acc:
+            return 500, {"ok": False, "error": "更新账号失败"}, headers
+
+        logger.info(f"账号 [{updated_acc.name}] 配置已保存更新 (代理={updated_acc.proxy_url or '直连'}, 目标={updated_acc.target_alias_count})", acc_id)
+
+        if reacquire:
+            pwd = updated_acc.password
+            curl = updated_acc.code_url
+            aid = updated_acc.apple_id
+            if not pwd or not curl:
+                return 400, {"ok": False, "error": "自动重登换证需要填写登录密码与取码URL！"}, headers
+
+            def _bg_reacquire():
+                logger.info(f"已触发账号 [{updated_acc.name}] 后台自动重新登录换证...", acc_id)
+                try:
+                    res = acquire_apple_account_session(
+                        aid,
+                        pwd,
+                        curl,
+                        proxy_url=updated_acc.proxy_url,
+                    )
+                    curr = db.get_account(acc_id)
+                    if not curr:
+                        return
+                    cookies_dict = {}
+                    for part in (curr.cookie or "").split(";"):
+                        if "=" in part:
+                            k, v = part.strip().split("=", 1)
+                            if k.strip() and v.strip():
+                                cookies_dict[k.strip()] = v.strip()
+                    for part in (res.get("apple_account_cookie") or "").split(";"):
+                        if "=" in part:
+                            k, v = part.strip().split("=", 1)
+                            if k.strip() and v.strip():
+                                cookies_dict[k.strip()] = v.strip()
+                    curr.cookie = "; ".join(f"{k}={v}" for k, v in cookies_dict.items())
+                    curr.scnt = res.get("scnt") or curr.scnt
+                    curr.api_key = res.get("api_key") or "cbf64fd6843ee630b463f358ea0b707b"
+                    curr.apple_cooldown_until = 0
+                    curr.apple_auth_expired = False
+                    curr.status = "active"
+                    curr.last_error = ""
+                    if curr.host and "maildomainws" in curr.host:
+                        curr.channel = "dual"
+                    else:
+                        curr.channel = "apple_account"
+                    db.save_account(curr)
+                    db.set_apple_auth_expired(acc_id, False)
+                    logger.success(f"账号 [{curr.name}] 后台自动换证成功！凭证已更新就绪。", acc_id)
+                except Exception as ex:
+                    logger.error(f"账号 [{updated_acc.name}] 后台自动换证失败: {ex}", acc_id)
+
+            threading.Thread(target=_bg_reacquire, daemon=True).start()
+            return 200, {
+                "ok": True,
+                "message": "账号配置已保存，已在后台启动自动登录换证！可查看系统事件日志了解换证进度。",
+                "data": updated_acc.to_dict(),
+            }, headers
+
+        return 200, {
+            "ok": True,
+            "message": "账号配置已保存成功！",
+            "data": updated_acc.to_dict(),
+        }, headers

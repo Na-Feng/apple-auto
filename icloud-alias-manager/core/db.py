@@ -432,6 +432,64 @@ class Database:
             """, (target_count, now, account_id))
             conn.commit()
 
+    def update_account_profile(
+        self,
+        account_id: str,
+        name: str,
+        apple_id: str,
+        password: str,
+        code_url: str,
+        proxy_url: str,
+        target_alias_count: int,
+        cookie: Optional[str] = None,
+        host: Optional[str] = None,
+        dsid: Optional[str] = None,
+        scnt: Optional[str] = None,
+        api_key: Optional[str] = None,
+        channel: Optional[str] = None,
+        clear_expired: bool = False,
+    ) -> bool:
+        now = int(time.time())
+        with self._lock, self._get_connection() as conn:
+            cur = conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,))
+            row = cur.fetchone()
+            if not row:
+                return False
+            acc_dict = dict(row)
+
+            updates: Dict[str, Any] = {
+                "name": name.strip() or acc_dict["name"],
+                "apple_id": apple_id.strip() or acc_dict["apple_id"],
+                "password": password.strip() if password.strip() else acc_dict.get("password", ""),
+                "code_url": code_url.strip() if code_url.strip() else acc_dict.get("code_url", ""),
+                "proxy_url": proxy_url.strip(),
+                "target_alias_count": target_alias_count if target_alias_count > 0 else acc_dict.get("target_alias_count", 750),
+                "updated_at": now,
+            }
+            if cookie is not None:
+                updates["cookie"] = cookie
+            if host is not None:
+                updates["host"] = host
+            if dsid is not None:
+                updates["dsid"] = dsid
+            if scnt is not None:
+                updates["scnt"] = scnt
+            if api_key is not None:
+                updates["api_key"] = api_key
+            if channel is not None:
+                updates["channel"] = channel
+            if clear_expired:
+                updates["apple_auth_expired"] = 0
+                updates["apple_cooldown_until"] = 0
+                updates["status"] = "active"
+                updates["last_error"] = ""
+
+            set_clauses = [f"{k} = ?" for k in updates.keys()]
+            values = list(updates.values()) + [account_id]
+            conn.execute(f"UPDATE accounts SET {', '.join(set_clauses)} WHERE id = ?", values)
+            conn.commit()
+            return True
+
     def update_account_check_result(
         self, account_id: str, alias_count: int, selected_forward_to: str, status: str = "active", error: str = ""
     ) -> None:
