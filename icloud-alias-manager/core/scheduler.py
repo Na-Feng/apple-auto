@@ -355,10 +355,10 @@ class BatchScheduler:
             if account.has_icloud_web and not account.is_icloud_cooling:
                 channels_to_try.append("icloud_web")
         elif account.channel == "apple_account":
-            if not account.is_apple_cooling:
+            if account.has_apple_account and not account.is_apple_cooling:
                 channels_to_try.append("apple_account")
         else:
-            if not account.is_icloud_cooling:
+            if account.has_icloud_web and not account.is_icloud_cooling:
                 channels_to_try.append("icloud_web")
 
         if not channels_to_try:
@@ -533,10 +533,10 @@ class BatchScheduler:
             if account.has_icloud_web and not account.is_icloud_cooling:
                 channels_to_try.append("icloud_web")
         elif account.channel == "apple_account":
-            if not account.is_apple_cooling:
+            if account.has_apple_account and not account.is_apple_cooling:
                 channels_to_try.append("apple_account")
         else:
-            if not account.is_icloud_cooling:
+            if account.has_icloud_web and not account.is_icloud_cooling:
                 channels_to_try.append("icloud_web")
 
         if not channels_to_try:
@@ -731,10 +731,10 @@ class AccountAutopilotManager:
                     if account.has_icloud_web and not account.is_icloud_cooling:
                         channels.append("icloud_web")
                 elif account.channel == "apple_account":
-                    if not account.is_apple_cooling:
+                    if account.has_apple_account and not account.is_apple_cooling:
                         channels.append("apple_account")
                 else:
-                    if not account.is_icloud_cooling:
+                    if account.has_icloud_web and not account.is_icloud_cooling:
                         channels.append("icloud_web")
 
                 # If all channels for this specific account are cooling
