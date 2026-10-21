@@ -11,6 +11,7 @@ from core.client_icloud_web import (
     CandidateExpiredError,
     HmeClientError,
     ICloudWebClient,
+    MaxLimitReachedError,
     NetworkError,
     RateLimitError,
 )
@@ -396,6 +397,11 @@ class BatchScheduler:
                 db.update_batch_item(item_id, status="success", created_email=email)
                 return email, ""
 
+            except MaxLimitReachedError as e:
+                logger.warning(f"账号 [{account.name}] 别名数量已达官方绝对上限 (750满额)：{e}", account.id)
+                last_err = str(e)
+                break
+
             except RateLimitError as e:
                 cooldown_sec = max(e.retry_after, 1800)
                 db.set_channel_cooldown(account.id, channel_name, cooldown_sec, last_error=str(e))
@@ -562,6 +568,11 @@ class BatchScheduler:
                 db.increment_account_local_alias_count(account.id)
                 logger.success(f"单次创建成功：{email} (账号: {account.name}, 通道: {ch})")
                 return alias.to_dict(), ""
+            except MaxLimitReachedError as e:
+                logger.warning(f"账号 [{account.name}] 别名数量已达官方绝对上限 (750满额)：{e}", account.id)
+                last_err = str(e)
+                break
+
             except RateLimitError as e:
                 db.set_channel_cooldown(account.id, ch, max(e.retry_after, 1800), last_error=str(e))
                 last_err = f"通道 [{ch}] 频控：{e}"
@@ -798,6 +809,11 @@ class AccountAutopilotManager:
                             account.id,
                         )
                         break
+                    except MaxLimitReachedError as e:
+                        db.update_account_autopilot_status(account_id, status="completed", last_error=str(e))
+                        logger.success(f"🎉 账号 [{account.name}] 别名总数已达 Apple 官方上限 (750个满额)，托管圆满完成！", account_id)
+                        break
+
                     except RateLimitError as e:
                         cooldown_sec = max(e.retry_after, 1800)
                         db.set_channel_cooldown(account.id, ch, cooldown_sec, last_error=str(e))

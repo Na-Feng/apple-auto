@@ -32,6 +32,11 @@ class RateLimitError(HmeClientError):
         self.retry_after = retry_after
 
 
+class MaxLimitReachedError(HmeClientError):
+    """Raised when the account has reached Apple's hard maximum quota (e.g. 750 aliases, Code -41012 or max_limit_reached)."""
+    pass
+
+
 class AuthExpiredError(HmeClientError):
     """Raised when iCloud session has expired (HTTP 401/403/421)."""
     pass
@@ -159,6 +164,10 @@ class ICloudWebClient:
             error_msg = str(parsed)
 
         combined = f"{error_code} {error_msg}".lower()
+
+        # Hard Max Capacity Limit check (750 aliases reached)
+        if error_code == "-41012" or "maximum number of email addresses" in combined:
+            raise MaxLimitReachedError(f"已达到 Apple 官方别名总额度上限 (750个满额)：{error_msg}", raw_response=parsed)
 
         # Rate Limit check
         if error_code == "-41015" or any(w in combined for w in [

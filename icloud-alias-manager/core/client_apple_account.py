@@ -5,7 +5,7 @@ import time
 import urllib.parse
 from typing import Any, Dict, List, Optional
 
-from core.client_icloud_web import AuthExpiredError, HmeClientError, NetworkError, RateLimitError
+from core.client_icloud_web import AuthExpiredError, HmeClientError, MaxLimitReachedError, NetworkError, RateLimitError
 from core.logger import logger
 from core.models import AccountModel
 
@@ -130,6 +130,9 @@ class AppleAccountClient:
             parsed = resp.json()
         except Exception:
             parsed = {"text": resp.text}
+
+        if isinstance(parsed, dict) and (parsed.get("ineligibilityReason") == "max_limit_reached" or parsed.get("maxLimitReached") is True):
+            raise MaxLimitReachedError("Apple Account 别名创建已达官方总上限 (750个满额)")
 
         if resp.status_code >= 400 or (isinstance(parsed, dict) and parsed.get("ineligibilityReason") == "rate_limit_exceeded"):
             msg = str(parsed)
@@ -268,11 +271,22 @@ class AppleAccountClient:
 
         try:
             # Perform a lightweight ping to verify actual management authentication
-            self._request("GET", "/account/manage/email/private", timeout=8)
+            resp = self._request("GET", "/account/manage/email/private", timeout=8)
+            alias_list = resp.get("privateEmailList") or []
+            alias_count = len(alias_list)
+            is_max = resp.get("maxLimitReached", False)
+            fwd = resp.get("forwardToEmailAddress") or self.account.selected_forward_to or "Apple ID 关联邮箱"
+
+            if alias_count > 0:
+                self.account.alias_count = alias_count
+                from core.db import db
+                db.save_account(self.account)
+
             return {
                 "ok": True,
-                "alias_count": self.account.alias_count,
-                "selected_forward_to": self.account.selected_forward_to or "Apple ID 关联邮箱",
+                "alias_count": alias_count,
+                "max_limit_reached": is_max,
+                "selected_forward_to": fwd,
             }
         except AuthExpiredError:
             raise
@@ -287,9 +301,26 @@ class AppleAccountClient:
             }
 
     def list_aliases(self) -> List[Dict[str, Any]]:
-        """Apple Account channel has no public bulk list endpoint; returns empty to avoid crash."""
-        logger.info("Apple Account 管理通道官方未开放别名列表拉取接口，已跳过远端同步", self.account.id)
-        return []
+        """Fetch all remote aliases belonging to this account on Apple Account management channel."""
+        try:
+            resp = self._request("GET", "/account/manage/email/private", timeout=15)
+            raw_list = resp.get("privateEmailList") or []
+            parsed = []
+            for item in raw_list:
+                parsed.append({
+                    "email": item.get("emailAddress", ""),
+                    "anonymous_id": item.get("id", ""),
+                    "label": item.get("label", ""),
+                    "note": item.get("note", ""),
+                    "forward_to": item.get("forwardToEmail", ""),
+                    "is_active": item.get("active", True),
+                    "created_at": int(time.time()),
+                })
+            logger.info(f"账号 [{self.account.name}] 成功通过 Apple Account 官方管理接口同步 {len(parsed)} 个别名", self.account.id)
+            return parsed
+        except Exception as e:
+            logger.warning(f"Apple Account 列表拉取异常: {e}", self.account.id)
+            return []
 
     # Aliases for unified interface with scheduler
     def generate_alias(self) -> str:
