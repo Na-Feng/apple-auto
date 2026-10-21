@@ -704,7 +704,8 @@ class AccountAutopilotManager:
                 if not account:
                     break
 
-                current_total = max(account.alias_count, account.local_alias_count)
+                db_count = db.get_account_alias_count(account_id)
+                current_total = max(account.alias_count, account.local_alias_count, db_count)
                 if current_total >= account.target_alias_count:
                     db.update_account_autopilot_status(account_id, status="completed", last_error="已达到 750 目标满额")
                     logger.success(f"🎉 账号 [{account.name}] 已圆满完成目标 ({current_total}/{account.target_alias_count})！", account_id)
@@ -841,6 +842,10 @@ class AccountAutopilotManager:
                             db.update_account_status(account.id, status="need_login", last_error=str(e))
                         continue
                     except Exception as e:
+                        if "-41012" in str(e) or "maximum number of email addresses" in str(e).lower():
+                            db.update_account_autopilot_status(account_id, status="completed", last_error="已达到 Apple 官方 750 别名上限满额")
+                            logger.success(f"🎉 账号 [{account.name}] 触发官方满额确认，已达到 750 上限！", account_id)
+                            break
                         logger.warning(f"账号 [{account.name}] 通道 [{ch}] 创建异常: {e}", account.id)
                         continue
 

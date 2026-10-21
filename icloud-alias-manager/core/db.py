@@ -470,6 +470,12 @@ class Database:
     # ALIAS OPERATIONS
     # ==========================
 
+    def get_account_alias_count(self, account_id: str) -> int:
+        with self._get_connection() as conn:
+            cur = conn.execute("SELECT COUNT(*) FROM aliases WHERE account_id = ?", (account_id,))
+            row = cur.fetchone()
+            return row[0] if row else 0
+
     def save_alias(self, alias: AliasModel) -> bool:
         with self._lock, self._get_connection() as conn:
             cur = conn.execute("""

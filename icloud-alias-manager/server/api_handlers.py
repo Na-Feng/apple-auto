@@ -646,29 +646,33 @@ class ApiHandler:
         if not acc:
             return 404, {"ok": False, "error": "账号不存在"}, headers
 
-        client = get_client(acc)
+        # For syncing aliases, always prefer iCloud Web channel which has the full list API
+        client = get_client(acc, prefer_channel="icloud_web") if acc.has_icloud_web else get_client(acc)
         try:
             remotes = client.list_aliases()
             added_count = 0
-            for r in remotes:
-                alias = AliasModel(
-                    id=str(uuid.uuid4())[:12],
-                    account_id=acc.id,
-                    email=r["email"],
-                    anonymous_id=r["anonymous_id"],
-                    label=r["label"],
-                    note=r["note"],
-                    forward_to=r["forward_to"],
-                    is_active=r["is_active"],
-                    channel=acc.channel,
-                    origin="synced",
-                    created_at=r["created_at"],
-                )
-                if db.save_alias(alias):
-                    added_count += 1
+            if remotes:
+                for r in remotes:
+                    alias = AliasModel(
+                        id=str(uuid.uuid4())[:12],
+                        account_id=acc.id,
+                        email=r["email"],
+                        anonymous_id=r["anonymous_id"],
+                        label=r["label"],
+                        note=r["note"],
+                        forward_to=r["forward_to"],
+                        is_active=r["is_active"],
+                        channel=acc.channel,
+                        origin="synced",
+                        created_at=r["created_at"],
+                    )
+                    if db.save_alias(alias):
+                        added_count += 1
 
-            db.update_account_check_result(account_id, len(remotes), acc.selected_forward_to, status="active")
-            logger.success(f"账号 [{acc.name}] 同步成功！远端共 {len(remotes)} 个别名，本地新增入库 {added_count} 个", account_id)
+                db.update_account_check_result(account_id, len(remotes), acc.selected_forward_to, status="active")
+                logger.success(f"账号 [{acc.name}] 同步成功！远端共 {len(remotes)} 个别名，本地新增入库 {added_count} 个", account_id)
+            else:
+                logger.info(f"账号 [{acc.name}] 当前使用的通道未开放列表查询接口，保留现有本地别名计数", account_id)
             return 200, {"ok": True, "data": {"total_remote": len(remotes), "new_saved": added_count}}, headers
         except Exception as e:
             logger.error(f"账号 [{acc.name}] 同步别名失败：{e}", account_id)
