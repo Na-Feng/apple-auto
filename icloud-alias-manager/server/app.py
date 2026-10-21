@@ -132,12 +132,19 @@ def _start_keepalive_worker() -> None:
             try:
                 accounts = db.get_all_accounts()
                 for acc in accounts:
-                    if acc.has_apple_account and acc.status in ("active", "cooling_down"):
+                    if acc.has_apple_account and acc.status in ("active", "cooling_down") and acc.autopilot_status != "completed":
                         try:
                             client = AppleAccountClient(acc)
                             client.keepalive()
                         except Exception as e:
                             logger.warning(f"账号 [{acc.name}] 周期保活心跳异常: {e}", acc.id)
+
+                # Periodically purge circuit-open / dead nodes in Resin
+                try:
+                    from core.resin_manager import resin_manager
+                    resin_manager.cleanup_broken_nodes()
+                except Exception:
+                    pass
             except Exception as e:
                 logger.warning(f"保活轮询工作线程异常: {e}")
             time.sleep(180)

@@ -92,23 +92,36 @@ class ICloudWebClient:
 
         # Strategy 1: curl_cffi with Chrome impersonation
         proxy = self.account.proxy_url.strip() if self.account.proxy_url else None
+        proxies_to_try = [proxy]
+        if proxy and "@" in proxy:
+            import urllib.parse
+            parsed_p = urllib.parse.urlsplit(proxy)
+            general_pool = f"{parsed_p.scheme}://{parsed_p.hostname}:{parsed_p.port}"
+            if general_pool != proxy:
+                proxies_to_try.append(general_pool)
+
         if HAS_CURL_CFFI:
-            try:
-                resp = cffi_requests.request(
-                    method=method,
-                    url=url,
-                    headers=headers,
-                    data=data_bytes,
-                    timeout=timeout,
-                    impersonate="chrome124",
-                    proxy=proxy,
-                )
-                status_code = resp.status_code
-                response_text = resp.text
-            except Exception as e:
-                # If curl_cffi encountered network error, try urllib fallback or raise NetworkError
-                logger.warning(f"curl_cffi request failed, trying urllib fallback: {e}", self.account.id)
-                status_code = 0
+            for p_attempt, cur_proxy in enumerate(proxies_to_try):
+                try:
+                    resp = cffi_requests.request(
+                        method=method,
+                        url=url,
+                        headers=headers,
+                        data=data_bytes,
+                        timeout=timeout,
+                        impersonate="chrome124",
+                        proxy=cur_proxy,
+                    )
+                    status_code = resp.status_code
+                    response_text = resp.text
+                    break
+                except Exception as e:
+                    if p_attempt < len(proxies_to_try) - 1:
+                        logger.warning(f"iCloud Web 专有代理抖动 ({e})，正在自动切换至健康代理池重试...", self.account.id)
+                        time.sleep(1)
+                        continue
+                    logger.warning(f"curl_cffi request failed, trying urllib fallback: {e}", self.account.id)
+                    status_code = 0
 
         # Strategy 2: urllib standard library fallback
         if status_code == 0:

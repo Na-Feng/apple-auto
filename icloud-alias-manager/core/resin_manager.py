@@ -167,18 +167,47 @@ class ResinManager:
         return []
 
     def add_subscription(self, name: str, url: str) -> Dict[str, Any]:
-        """Adds a remote Clash / YAML subscription to Resin."""
+        """Adds a remote Clash / YAML subscription to Resin if not already added."""
+        clean_url = url.strip()
+        clean_name = name.strip()
+        existing = self.list_subscriptions()
+        for s in existing:
+            if s.get("url") == clean_url or s.get("name") == clean_name:
+                return {"ok": True, "data": s, "already_exists": True}
+
         payload = {
-            "name": name.strip(),
-            "url": url.strip(),
+            "name": clean_name,
+            "url": clean_url,
             "update_interval": "10m",
             "enabled": True,
         }
         res = self._post_json("/api/v1/subscriptions", payload)
         if res:
             logger.success(f"已向 Resin 成功添加订阅源 [{name}]：{url}")
+            # Also clean up broken nodes
+            self.cleanup_broken_nodes()
             return {"ok": True, "data": res}
         return {"ok": False, "error": "添加订阅失败，请检查 Resin 是否启动或订阅 URL 是否有效"}
+
+    def cleanup_broken_nodes(self) -> int:
+        """Removes all circuit-open or dead proxy nodes across all active subscriptions."""
+        total_cleaned = 0
+        try:
+            subs = self.list_subscriptions()
+            for s in subs:
+                sub_id = s.get("id")
+                if not sub_id:
+                    continue
+                path = f"/api/v1/subscriptions/{sub_id}/actions/cleanup-circuit-open-nodes"
+                res = self._post_json(path, {})
+                if res and "cleaned_count" in res:
+                    cnt = res.get("cleaned_count", 0)
+                    total_cleaned += cnt
+            if total_cleaned > 0:
+                logger.info(f"Resin 智能熔断自动清理: 已剔除 {total_cleaned} 个超时失效的上游代理节点")
+        except Exception as e:
+            logger.warning(f"Resin 剔除故障节点异常: {e}")
+        return total_cleaned
 
     def delete_subscription(self, sub_id: str) -> bool:
         """Deletes a subscription from Resin."""

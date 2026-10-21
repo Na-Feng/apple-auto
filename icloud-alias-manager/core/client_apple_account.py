@@ -70,19 +70,36 @@ class AppleAccountClient:
             raise HmeClientError("Apple Account 接口需要安装 curl_cffi 支持")
 
         proxy = self.account.proxy_url.strip() if self.account.proxy_url else None
-        try:
-            resp = cffi_requests.request(
-                method=method,
-                url=url,
-                headers=headers,
-                data=data_str,
-                timeout=timeout,
-                impersonate="chrome124",
-                proxy=proxy,
-            )
-        except Exception as e:
-            proxy_info = f" (通过代理: {proxy})" if proxy else ""
-            raise NetworkError(f"请求 Apple Account 超时或网络异常{proxy_info}：{e}")
+        proxies_to_try = [proxy]
+        if proxy and "@" in proxy:
+            import urllib.parse
+            parsed_p = urllib.parse.urlsplit(proxy)
+            general_pool = f"{parsed_p.scheme}://{parsed_p.hostname}:{parsed_p.port}"
+            if general_pool != proxy:
+                proxies_to_try.append(general_pool)
+
+        resp = None
+        last_net_err = None
+        for attempt, current_proxy in enumerate(proxies_to_try):
+            try:
+                resp = cffi_requests.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    data=data_str,
+                    timeout=timeout,
+                    impersonate="chrome124",
+                    proxy=current_proxy,
+                )
+                break
+            except Exception as e:
+                last_net_err = e
+                if attempt < len(proxies_to_try) - 1:
+                    logger.warning(f"账号 [{self.account.name}] 专有代理节点网络抖动/超时 ({e})，正在自动切换至健康代理池重试...", self.account.id)
+                    time.sleep(1)
+                    continue
+                proxy_info = f" (通过代理: {current_proxy})" if current_proxy else ""
+                raise NetworkError(f"请求 Apple Account 超时或网络异常{proxy_info}：{e}")
 
         # Auto-capture fresh scnt from response header if present
         updated_db = False
@@ -218,6 +235,13 @@ class AppleAccountClient:
                     if self.keepalive() or self._auto_reacquire():
                         continue
                 break
+            except NetworkError as e:
+                last_err = e
+                if attempt == 0:
+                    logger.warning(f"账号 [{self.account.name}] 生成候选遇网络抖动，1秒后重试...", self.account.id)
+                    time.sleep(1)
+                    continue
+                break
             except Exception as e:
                 last_err = e
                 break
@@ -255,6 +279,13 @@ class AppleAccountClient:
                     logger.info(f"账号 [{self.account.name}] 提交预留时凭据过期，尝试自动续期或重采...", self.account.id)
                     if self.keepalive() or self._auto_reacquire():
                         continue
+                break
+            except NetworkError as e:
+                last_err = e
+                if attempt == 0:
+                    logger.warning(f"账号 [{self.account.name}] 生成候选遇网络抖动，1秒后重试...", self.account.id)
+                    time.sleep(1)
+                    continue
                 break
             except Exception as e:
                 last_err = e
