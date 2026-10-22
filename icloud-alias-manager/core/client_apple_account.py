@@ -206,9 +206,12 @@ class AppleAccountClient:
             self.account.api_key = res.get("api_key") or self.account.api_key
             self.account.apple_cooldown_until = 0
             self.account.apple_auth_expired = False
+            self.account.status = "active"
+            self.account.last_error = ""
             from core.db import db
             db.save_account(self.account)
             db.set_apple_auth_expired(self.account.id, False)
+            db.update_account_status(self.account.id, "active", "")
             logger.success(f"账号 [{self.account.name}] Apple Account 凭证已全自动无感重新就绪！", self.account.id)
             return True
         except Exception as e:

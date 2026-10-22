@@ -802,6 +802,7 @@ class AccountAutopilotManager:
                         )
                         db.save_alias(alias)
                         db.increment_account_local_alias_count(account.id)
+                        db.update_account_status(account.id, "active", "")
                         current_total += 1
                         created = True
                         logger.success(
@@ -842,6 +843,7 @@ class AccountAutopilotManager:
                                         )
                                         db.save_alias(alias2)
                                         db.increment_account_local_alias_count(account.id)
+                                        db.update_account_status(account.id, "active", "")
                                         current_total += 1
                                         created = True
                                         logger.success(
