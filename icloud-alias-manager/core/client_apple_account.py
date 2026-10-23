@@ -344,25 +344,38 @@ class AppleAccountClient:
 
     def list_aliases(self) -> List[Dict[str, Any]]:
         """Fetch all remote aliases belonging to this account on Apple Account management channel."""
-        try:
-            resp = self._request("GET", "/account/manage/email/private", timeout=15)
-            raw_list = resp.get("privateEmailList") or []
-            parsed = []
-            for item in raw_list:
-                parsed.append({
-                    "email": item.get("emailAddress", ""),
-                    "anonymous_id": item.get("id", ""),
-                    "label": item.get("label", ""),
-                    "note": item.get("note", ""),
-                    "forward_to": item.get("forwardToEmail", ""),
-                    "is_active": item.get("active", True),
-                    "created_at": int(time.time()),
-                })
-            logger.info(f"账号 [{self.account.name}] 成功通过 Apple Account 官方管理接口同步 {len(parsed)} 个别名", self.account.id)
-            return parsed
-        except Exception as e:
-            logger.warning(f"Apple Account 列表拉取异常: {e}", self.account.id)
-            return []
+        for attempt in range(2):
+            try:
+                resp = self._request("GET", "/account/manage/email/private", timeout=15)
+                raw_list = resp.get("privateEmailList") or []
+                parsed = []
+                for item in raw_list:
+                    parsed.append({
+                        "email": item.get("emailAddress", ""),
+                        "anonymous_id": item.get("id", ""),
+                        "label": item.get("label", ""),
+                        "note": item.get("note", ""),
+                        "forward_to": item.get("forwardToEmail", ""),
+                        "is_active": item.get("active", True),
+                        "created_at": int(time.time()),
+                    })
+                logger.info(f"账号 [{self.account.name}] 成功通过 Apple Account 官方管理接口同步 {len(parsed)} 个别名", self.account.id)
+                return parsed
+            except AuthExpiredError as e:
+                if attempt == 0 and self.account.can_reacquire_apple:
+                    logger.info(f"账号 [{self.account.name}] 同步时凭证过期，正在自动重新认证换证...", self.account.id)
+                    if self._auto_reacquire():
+                        continue
+                logger.warning(f"Apple Account 列表拉取凭据失效: {e}", self.account.id)
+                raise
+            except Exception as e:
+                if ("401" in str(e) or "403" in str(e)) and attempt == 0 and self.account.can_reacquire_apple:
+                    logger.info(f"账号 [{self.account.name}] 同步时凭据过期 (HTTP 401/403)，正在自动重新认证换证...", self.account.id)
+                    if self._auto_reacquire():
+                        continue
+                logger.warning(f"Apple Account 列表拉取异常: {e}", self.account.id)
+                raise
+        return []
 
     # Aliases for unified interface with scheduler
     def generate_alias(self) -> str:

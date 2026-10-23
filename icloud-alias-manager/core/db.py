@@ -299,12 +299,27 @@ class Database:
             row = cur.fetchone()
             if not row:
                 return None
-            return AccountModel(**dict(row))
+            acc = AccountModel(**dict(row))
+            cnt_row = conn.execute("SELECT COUNT(*) FROM aliases WHERE account_id = ?", (account_id,)).fetchone()
+            db_alias_count = cnt_row[0] if cnt_row else 0
+            if db_alias_count > acc.alias_count:
+                acc.alias_count = db_alias_count
+            if db_alias_count > acc.local_alias_count:
+                acc.local_alias_count = db_alias_count
+            return acc
 
     def get_all_accounts(self) -> List[AccountModel]:
         with self._lock, self._get_connection() as conn:
             cur = conn.execute("SELECT * FROM accounts ORDER BY created_at ASC")
-            return [AccountModel(**dict(row)) for row in cur.fetchall()]
+            accounts = [AccountModel(**dict(row)) for row in cur.fetchall()]
+            for acc in accounts:
+                cnt_row = conn.execute("SELECT COUNT(*) FROM aliases WHERE account_id = ?", (acc.id,)).fetchone()
+                db_alias_count = cnt_row[0] if cnt_row else 0
+                if db_alias_count > acc.alias_count:
+                    acc.alias_count = db_alias_count
+                if db_alias_count > acc.local_alias_count:
+                    acc.local_alias_count = db_alias_count
+            return accounts
 
     def get_available_accounts(self) -> List[AccountModel]:
         with self._lock, self._get_connection() as conn:

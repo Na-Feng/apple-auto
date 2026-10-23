@@ -301,10 +301,14 @@ const app = {
   },
 
   async syncAccount(accId) {
-    this.showToast("正在从 iCloud 远端同步所有别名...", "info");
+    this.showToast("正在从 iCloud / Apple 远端同步所有别名...", "info");
     const res = await this.apiPost(`/api/accounts/${accId}/sync`);
     if (res.ok) {
-      this.showToast(`同步成功！远端总数: ${res.data.total_remote}，本地新增: ${res.data.new_saved}`, "success");
+      if (res.data.new_saved > 0) {
+        this.showToast(`同步成功！远端总数: ${res.data.total_remote}，本地新增: ${res.data.new_saved}`, "success");
+      } else {
+        this.showToast(`同步完成！账号当前已有 ${res.data.total_remote} 个别名，本地已全部同步入库。`, "success");
+      }
       this.loadAccounts();
       this.loadStats();
     } else {
