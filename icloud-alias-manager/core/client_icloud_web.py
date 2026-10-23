@@ -116,8 +116,15 @@ class ICloudWebClient:
                     response_text = resp.text
                     break
                 except Exception as e:
+                    if cur_proxy and "127.0.0.1:2260" in cur_proxy:
+                        try:
+                            from core.resin_manager import resin_manager
+                            resin_manager.rotate_account_session(self.account.id)
+                        except Exception:
+                            pass
+
                     if p_attempt < len(proxies_to_try) - 1:
-                        logger.warning(f"iCloud Web 专有代理抖动 ({e})，正在自动切换至健康代理池重试...", self.account.id)
+                        logger.warning(f"iCloud Web 专有代理抖动 ({e})，正在自动切换至健康出口 IP 重试...", self.account.id)
                         time.sleep(1)
                         continue
                     logger.warning(f"curl_cffi request failed, trying urllib fallback: {e}", self.account.id)

@@ -94,8 +94,16 @@ class AppleAccountClient:
                 break
             except Exception as e:
                 last_net_err = e
+                # Network jitter on current proxy: rotate sticky lease to drift to an un-jittered IP without deleting node
+                if current_proxy and "127.0.0.1:2260" in current_proxy:
+                    try:
+                        from core.resin_manager import resin_manager
+                        resin_manager.rotate_account_session(self.account.id)
+                    except Exception:
+                        pass
+
                 if attempt < len(proxies_to_try) - 1:
-                    logger.warning(f"账号 [{self.account.name}] 专有代理节点网络抖动/超时 ({e})，正在自动切换至健康代理池重试...", self.account.id)
+                    logger.warning(f"账号 [{self.account.name}] 专有代理节点网络抖动/超时 ({e})，正在自动切换至健康出口 IP 重试...", self.account.id)
                     time.sleep(1)
                     continue
                 proxy_info = f" (通过代理: {current_proxy})" if current_proxy else ""

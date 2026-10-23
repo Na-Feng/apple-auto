@@ -139,10 +139,10 @@ def _start_keepalive_worker() -> None:
                         except Exception as e:
                             logger.warning(f"账号 [{acc.name}] 周期保活心跳异常: {e}", acc.id)
 
-                # Periodically purge circuit-open / dead nodes in Resin
+                # Ensure Resin subscriptions maintain healthy nodes without ever deleting jittery nodes
                 try:
                     from core.resin_manager import resin_manager
-                    resin_manager.cleanup_broken_nodes()
+                    resin_manager.sync_subscriptions_if_empty()
                 except Exception:
                     pass
             except Exception as e:

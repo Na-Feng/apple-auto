@@ -309,6 +309,12 @@ class ApiHandler:
                     return 200, {"ok": True, "message": "已成功添加订阅源并同步至 Resin 代理网关", "data": res.get("data")}, headers
                 return 400, {"ok": False, "error": res.get("error", "添加订阅失败")}, headers
 
+            if path.startswith("/api/proxy/subscriptions/") and path.endswith("/refresh") and method == "POST":
+                sub_id = path.split("/")[4]
+                from core.resin_manager import resin_manager
+                ok = resin_manager.refresh_subscription(sub_id)
+                return 200, {"ok": ok, "message": "订阅节点已刷新就绪" if ok else "刷新失败"}, headers
+
             if path.startswith("/api/proxy/subscriptions/") and method == "DELETE":
                 sub_id = path.split("/")[4]
                 from core.resin_manager import resin_manager

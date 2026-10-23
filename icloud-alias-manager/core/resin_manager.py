@@ -184,30 +184,45 @@ class ResinManager:
         res = self._post_json("/api/v1/subscriptions", payload)
         if res:
             logger.success(f"已向 Resin 成功添加订阅源 [{name}]：{url}")
-            # Also clean up broken nodes
-            self.cleanup_broken_nodes()
+            sub_id = res.get("id")
+            if sub_id:
+                self.refresh_subscription(sub_id)
             return {"ok": True, "data": res}
         return {"ok": False, "error": "添加订阅失败，请检查 Resin 是否启动或订阅 URL 是否有效"}
 
-    def cleanup_broken_nodes(self) -> int:
-        """Removes all circuit-open or dead proxy nodes across all active subscriptions."""
-        total_cleaned = 0
+    def refresh_subscription(self, sub_id: str) -> bool:
+        """Triggers Resin to refresh a remote subscription and load nodes without deleting anything."""
+        try:
+            res = self._post_json(f"/api/v1/subscriptions/{sub_id}/actions/refresh", {})
+            return bool(res and res.get("status") == "ok")
+        except Exception as e:
+            logger.warning(f"刷新 Resin 订阅 [{sub_id}] 异常: {e}")
+            return False
+
+    def sync_subscriptions_if_empty(self) -> None:
+        """
+        Auto-refreshes remote subscriptions if active nodes drop to 0.
+        NEVER permanently deletes or disables nodes on network jitter.
+        """
         try:
             subs = self.list_subscriptions()
             for s in subs:
                 sub_id = s.get("id")
                 if not sub_id:
                     continue
-                path = f"/api/v1/subscriptions/{sub_id}/actions/cleanup-circuit-open-nodes"
-                res = self._post_json(path, {})
-                if res and "cleaned_count" in res:
-                    cnt = res.get("cleaned_count", 0)
-                    total_cleaned += cnt
-            if total_cleaned > 0:
-                logger.info(f"Resin 智能熔断自动清理: 已剔除 {total_cleaned} 个超时失效的上游代理节点")
+                node_count = s.get("node_count", 0)
+                healthy_count = s.get("healthy_node_count", 0)
+                if node_count == 0 or healthy_count == 0:
+                    logger.info(f"Resin 节点池保护: 检测到订阅 [{s.get('name', sub_id)}] 可用节点为 0，正在自动同步重新拉取...")
+                    self.refresh_subscription(sub_id)
         except Exception as e:
-            logger.warning(f"Resin 剔除故障节点异常: {e}")
-        return total_cleaned
+            logger.warning(f"Resin 同步检查异常: {e}")
+
+    def list_platforms(self) -> List[Dict[str, Any]]:
+        res = self._get_json("/api/v1/platforms")
+        if res and isinstance(res.get("items"), list):
+            return res["items"]
+        return []
 
     def delete_subscription(self, sub_id: str) -> bool:
         """Deletes a subscription from Resin."""
@@ -236,14 +251,31 @@ class ResinManager:
 
     def rotate_account_session(self, account_id: str) -> bool:
         """
-        Rotates outbound node/lease for the account when hit by Apple rate limits.
+        Evicts the sticky lease for the account in Resin when experiencing network jitter,
+        allowing Resin to transparently allocate a fresh, non-jittery healthy egress node.
+        The old node is NOT deleted or disabled; it remains in the pool for future recovery.
         """
         try:
-            logger.info(f"账号 [{account_id}] 触发 Resin 粘性 IP 重新轮换，正在漂移至新出口节点...", account_id)
-            # In Resin, lease can be evicted or updated
-            return True
-        except Exception:
-            return False
+            clean_id = account_id.replace(" ", "_").replace(":", "_").strip()
+            platforms = self.list_platforms()
+            plat_id = "00000000-0000-0000-0000-000000000000"
+            if platforms:
+                plat_id = platforms[0].get("id", plat_id)
+
+            url = f"http://127.0.0.1:{self.port}/api/v1/platforms/{plat_id}/leases/{clean_id}"
+            req = urllib.request.Request(url, headers=self._admin_headers(), method="DELETE")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status in (200, 204):
+                    logger.info(f"Resin 智能出口漂移: 账号 [{account_id}] 专有出口租期已重置，已无感切换至健康出口 IP", account_id)
+                    return True
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                # Lease was not present or already evicted
+                return True
+            logger.debug(f"重置账号租期 HTTP 异常: {e}")
+        except Exception as e:
+            logger.debug(f"重置账号租期异常: {e}")
+        return False
 
     # ==========================
     # HTTP HELPERS

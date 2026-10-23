@@ -639,12 +639,26 @@ const app = {
               <td><span class="badge badge-success">${s.healthy_node_count || 0} 出口IP</span></td>
               <td><span class="text-success" style="font-size:12px;">已自动同步</span></td>
               <td>
-                <button class="btn btn-sm btn-danger" onclick="app.deleteSubscription('${s.id}', '${this.escapeHtml(s.name)}')">🗑️ 删除</button>
+                <div style="display:flex; gap:6px;">
+                  <button class="btn btn-sm btn-secondary" onclick="app.refreshSubscription('${s.id}')" title="重新从订阅链接拉取全部节点，永不物理删除抖动节点">🔄 刷新节点</button>
+                  <button class="btn btn-sm btn-danger" onclick="app.deleteSubscription('${s.id}', '${this.escapeHtml(s.name)}')">🗑️ 删除</button>
+                </div>
               </td>
             </tr>
           `;
         }).join("");
       }
+    }
+  },
+
+  async refreshSubscription(subId) {
+    this.showToast("正在同步拉取订阅最新节点...", "info");
+    const res = await this.apiPost(`/api/proxy/subscriptions/${subId}/refresh`, {});
+    if (res.ok) {
+      this.showToast("订阅节点已刷新就绪！", "success");
+      this.loadProxyHub();
+    } else {
+      this.showToast(res.error || "刷新失败", "error");
     }
   },
 
